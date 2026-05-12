@@ -198,14 +198,14 @@
 - Create: `internal/config/sources.go`
 - Create: `internal/config/config_test.go`
 
-- [ ] Implement post-approval read of Claude user settings, shell profile or Windows user env, current process environment, IDE settings, and project settings.
-- [ ] Ensure startup decline path performs no reads, existence checks, commands, HTTP calls, writes, or env changes.
-- [ ] Resolve persisted global sources with shell/Windows user env priority over Claude user settings.
-- [ ] Resolve current effective sources with current process env priority over Claude user settings.
-- [ ] Keep IDE and project settings as side contexts that do not overwrite global resolution.
-- [ ] Detect persisted conflicts, duplicate shell values, dynamic/complex shell assignments, current-only and persisted-only values.
-- [ ] Add tests for source precedence, shadowed values, current vs persisted differences, project override comparisons, IDE drift, and malformed source severity.
-- [ ] Run focused config tests.
+- [x] Implement post-approval read of Claude user settings, shell profile or Windows user env, current process environment, IDE settings, and project settings.
+- [x] Ensure startup decline path performs no reads, existence checks, commands, HTTP calls, writes, or env changes.
+- [x] Resolve persisted global sources with shell/Windows user env priority over Claude user settings.
+- [x] Resolve current effective sources with current process env priority over Claude user settings.
+- [x] Keep IDE and project settings as side contexts that do not overwrite global resolution.
+- [x] Detect persisted conflicts, duplicate shell values, dynamic/complex shell assignments, current-only and persisted-only values.
+- [x] Add tests for source precedence, shadowed values, current vs persisted differences, project override comparisons, IDE drift, and malformed source severity.
+- [x] Run focused config tests.
 
 ### Task 8: Diagnostics Engine and Report Rendering
 **Files:**

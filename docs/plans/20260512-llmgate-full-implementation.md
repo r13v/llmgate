@@ -127,13 +127,13 @@
 - Create: `internal/system/env_other.go`
 - Create: `internal/system/fake_test.go`
 
-- [ ] Define injectable interfaces for filesystem operations, process environment, command execution, terminal interactivity, current OS, home directory, working directory, and Windows user environment access.
-- [ ] Implement production adapters for real filesystem, terminal detection, current env, and `claude --version`.
-- [ ] Implement platform path detection for Claude settings, shell profiles, VS Code, Cursor, project settings, and Windows user environment.
-- [ ] Implement Windows user-scoped environment adapter behind Windows build tags.
-- [ ] Add fake system implementation for unit and e2e tests.
-- [ ] Add tests for macOS, Linux, and Windows path detection, shell profile selection, unknown shell handling, and IDE target detection rules.
-- [ ] Run focused system tests and cross-compile Windows packages where possible.
+- [x] Define injectable interfaces for filesystem operations, process environment, command execution, terminal interactivity, current OS, home directory, working directory, and Windows user environment access.
+- [x] Implement production adapters for real filesystem, terminal detection, current env, and `claude --version`.
+- [x] Implement platform path detection for Claude settings, shell profiles, VS Code, Cursor, project settings, and Windows user environment.
+- [x] Implement Windows user-scoped environment adapter behind Windows build tags.
+- [x] Add fake system implementation for unit and e2e tests.
+- [x] Add tests for macOS, Linux, and Windows path detection, shell profile selection, unknown shell handling, and IDE target detection rules.
+- [x] Run focused system tests and cross-compile Windows packages where possible.
 
 ### Task 4: JSONC Settings Parser and Writer
 **Files:**

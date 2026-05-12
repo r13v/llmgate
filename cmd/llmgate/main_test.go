@@ -95,15 +95,38 @@ func TestRunUnexpectedArgument(t *testing.T) {
 }
 
 func TestRunArgumentErrorsRedactTokenLikeSecrets(t *testing.T) {
-	for _, args := range [][]string{
-		{"sk-test-token-1234567890"},
-		{"--version=sk-test-token-1234567890"},
-	} {
-		t.Run(strings.Join(args, " "), func(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		leak string
+		want string
+	}{
+		{
+			name: "long unexpected argument",
+			args: []string{"sk-test-token-1234567890"},
+			leak: "sk-test-token-1234567890",
+			want: "sk-...7890",
+		},
+		{
+			name: "long flag value",
+			args: []string{"--version=sk-test-token-1234567890"},
+			leak: "sk-test-token-1234567890",
+			want: "sk-...7890",
+		},
+		{
+			name: "short unexpected argument",
+			args: []string{"sk-abc"},
+			leak: "sk-abc",
+			want: "sk-[redacted]",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
 
-			code := run(args, &stdout, &stderr)
+			code := run(tt.args, &stdout, &stderr)
 
 			if code != 2 {
 				t.Fatalf("run returned %d, want 2", code)
@@ -111,10 +134,10 @@ func TestRunArgumentErrorsRedactTokenLikeSecrets(t *testing.T) {
 			if stdout.Len() != 0 {
 				t.Fatalf("argument error wrote stdout: %q", stdout.String())
 			}
-			if strings.Contains(stderr.String(), "sk-test-token-1234567890") {
+			if strings.Contains(stderr.String(), tt.leak) {
 				t.Fatalf("argument error leaked token: %q", stderr.String())
 			}
-			if !strings.Contains(stderr.String(), "sk-...7890") {
+			if !strings.Contains(stderr.String(), tt.want) {
 				t.Fatalf("argument error missing masked token: %q", stderr.String())
 			}
 		})

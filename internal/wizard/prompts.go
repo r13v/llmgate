@@ -150,14 +150,14 @@ func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, tok
 	return gatewayRecovery(value), promptErr
 }
 
-func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendation gateway.Recommendation) (bool, error) {
+func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendation gateway.Recommendation, token string, display displayOptions) (bool, error) {
 	return prompts.Confirm(ctx, ConfirmPrompt{
 		Title: "Use recommended Claude model mapping?",
 		Description: strings.Join([]string{
-			"Primary: " + recommendation.Primary,
-			"Haiku: " + recommendation.Haiku,
-			"Sonnet: " + recommendation.Sonnet,
-			"Opus: " + recommendation.Opus,
+			"Primary: " + sanitizeText(recommendation.Primary, []string{token}, display),
+			"Haiku: " + sanitizeText(recommendation.Haiku, []string{token}, display),
+			"Sonnet: " + sanitizeText(recommendation.Sonnet, []string{token}, display),
+			"Opus: " + sanitizeText(recommendation.Opus, []string{token}, display),
 		}, "\n"),
 		Affirmative: "Use",
 		Negative:    "Choose manually",
@@ -165,11 +165,12 @@ func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendati
 	})
 }
 
-func promptManualModels(ctx context.Context, prompts Prompter, models []string, defaults core.SetupValues, recommendation gateway.Recommendation) (core.SetupValues, error) {
+func promptManualModels(ctx context.Context, prompts Prompter, models []string, defaults core.SetupValues, recommendation gateway.Recommendation, display displayOptions) (core.SetupValues, error) {
+	knownSecrets := []string{defaults.AuthToken}
 	primaryDefault := firstAvailable(models, defaults.Model, recommendation.Primary)
 	primary, err := prompts.Select(ctx, SelectPrompt{
 		Title:   "Primary Claude Code model",
-		Options: selectOptions(models),
+		Options: selectOptions(models, knownSecrets, display),
 		Default: primaryDefault,
 	})
 	if err != nil {
@@ -198,15 +199,15 @@ func promptManualModels(ctx context.Context, prompts Prompter, models []string, 
 		return values, nil
 	}
 
-	haiku, err := promptTierModel(ctx, prompts, "Haiku tier model", models, firstAvailable(models, defaults.HaikuModel, recommendation.Haiku, primary))
+	haiku, err := promptTierModel(ctx, prompts, "Haiku tier model", models, firstAvailable(models, defaults.HaikuModel, recommendation.Haiku, primary), knownSecrets, display)
 	if err != nil {
 		return core.SetupValues{}, err
 	}
-	sonnet, err := promptTierModel(ctx, prompts, "Sonnet tier model", models, firstAvailable(models, defaults.SonnetModel, recommendation.Sonnet, primary))
+	sonnet, err := promptTierModel(ctx, prompts, "Sonnet tier model", models, firstAvailable(models, defaults.SonnetModel, recommendation.Sonnet, primary), knownSecrets, display)
 	if err != nil {
 		return core.SetupValues{}, err
 	}
-	opus, err := promptTierModel(ctx, prompts, "Opus tier model", models, firstAvailable(models, defaults.OpusModel, recommendation.Opus, primary))
+	opus, err := promptTierModel(ctx, prompts, "Opus tier model", models, firstAvailable(models, defaults.OpusModel, recommendation.Opus, primary), knownSecrets, display)
 	if err != nil {
 		return core.SetupValues{}, err
 	}
@@ -216,10 +217,10 @@ func promptManualModels(ctx context.Context, prompts Prompter, models []string, 
 	return values, nil
 }
 
-func promptTierModel(ctx context.Context, prompts Prompter, title string, models []string, defaultValue string) (string, error) {
+func promptTierModel(ctx context.Context, prompts Prompter, title string, models []string, defaultValue string, knownSecrets []string, display displayOptions) (string, error) {
 	return prompts.Select(ctx, SelectPrompt{
 		Title:   title,
-		Options: selectOptions(models),
+		Options: selectOptions(models, knownSecrets, display),
 		Default: defaultValue,
 	})
 }

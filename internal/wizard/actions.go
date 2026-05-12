@@ -202,7 +202,7 @@ gatewayLoop:
 
 		modelDefaults := modelDefaultsFromResolution(result.Diagnostics.Resolution, token, baseURL)
 		for {
-			values, modelErr := r.chooseModels(ctx, modelList.Models, modelDefaults)
+			values, modelErr := r.chooseModels(ctx, modelList.Models, modelDefaults, display)
 			if modelErr != nil {
 				if isCancelError(modelErr) {
 					return nil
@@ -260,10 +260,10 @@ gatewayLoop:
 	}
 }
 
-func (r runner) chooseModels(ctx context.Context, models []string, defaults core.SetupValues) (core.SetupValues, error) {
+func (r runner) chooseModels(ctx context.Context, models []string, defaults core.SetupValues, display displayOptions) (core.SetupValues, error) {
 	recommendation, ok := gateway.Recommend(models)
 	if ok {
-		useRecommendation, err := promptUseRecommendation(ctx, r.prompts, recommendation)
+		useRecommendation, err := promptUseRecommendation(ctx, r.prompts, recommendation, defaults.AuthToken, display)
 		if err != nil {
 			return core.SetupValues{}, err
 		}
@@ -271,7 +271,7 @@ func (r runner) chooseModels(ctx context.Context, models []string, defaults core
 			return recommendation.SetupValues(defaults.AuthToken, defaults.BaseURL), nil
 		}
 	}
-	return promptManualModels(ctx, r.prompts, models, defaults, recommendation)
+	return promptManualModels(ctx, r.prompts, models, defaults, recommendation, display)
 }
 
 func (r runner) validateSelectedModels(ctx context.Context, values core.SetupValues) error {
@@ -381,6 +381,8 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 }
 
 func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
+	display := displayOptions{HomeDir: result.Read.Paths.HomeDir, GOOS: result.Read.Paths.GOOS}
+	knownSecrets := diagnose.KnownSecrets(result)
 	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, result.Status())
 	for _, section := range result.Sections {
 		for _, check := range section.Checks {
@@ -391,6 +393,7 @@ func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 			if summary == "" {
 				summary = check.Title
 			}
+			summary = sanitizeText(summary, knownSecrets, display)
 			_, _ = fmt.Fprintf(r.out, "- %s: %s\n", check.Status, summary)
 		}
 	}

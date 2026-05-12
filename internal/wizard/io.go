@@ -177,10 +177,10 @@ func optionValueExists(options []Option, value string) bool {
 	return false
 }
 
-func selectOptions(values []string) []Option {
+func selectOptions(values []string, knownSecrets []string, display displayOptions) []Option {
 	options := make([]Option, 0, len(values))
 	for _, value := range values {
-		options = append(options, Option{Label: value, Value: value})
+		options = append(options, Option{Label: sanitizeText(value, knownSecrets, display), Value: value})
 	}
 	return options
 }

@@ -152,6 +152,12 @@ func inheritingSimpleAssignment(name, value string, line int, comment string) As
 	return assignment
 }
 
+func unexportingSimpleAssignment(name, value string, line int, comment string) Assignment {
+	assignment := simpleAssignment(name, value, line, comment)
+	assignment.Unexports = true
+	return assignment
+}
+
 func dynamicAssignment(name string, line int, comment string) Assignment {
 	return Assignment{
 		Name:    name,
@@ -170,6 +176,12 @@ func exportedDynamicAssignment(name string, line int, comment string) Assignment
 func inheritingDynamicAssignment(name string, line int, comment string) Assignment {
 	assignment := dynamicAssignment(name, line, comment)
 	assignment.InheritsExport = true
+	return assignment
+}
+
+func unexportingDynamicAssignment(name string, line int, comment string) Assignment {
+	assignment := dynamicAssignment(name, line, comment)
+	assignment.Unexports = true
 	return assignment
 }
 

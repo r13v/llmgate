@@ -22,7 +22,7 @@ func Render(result Result, opts RenderOptions) string {
 	if opts.GOOS == "" {
 		opts.GOOS = result.Read.Paths.GOOS
 	}
-	opts.KnownSecrets = append(opts.KnownSecrets, knownSecrets(result)...)
+	opts.KnownSecrets = append(opts.KnownSecrets, KnownSecrets(result)...)
 
 	var builder strings.Builder
 	_, _ = fmt.Fprintf(&builder, "llmgate diagnosis: %s\n", result.Status())
@@ -60,7 +60,8 @@ func Render(result Result, opts RenderOptions) string {
 	})
 }
 
-func knownSecrets(result Result) []string {
+// KnownSecrets returns secret values discovered in the diagnostic input.
+func KnownSecrets(result Result) []string {
 	var secrets []string
 	secrets = append(secrets, secretsFromResolved(result.Resolution.Current)...)
 	secrets = append(secrets, secretsFromResolved(result.Resolution.Persisted)...)

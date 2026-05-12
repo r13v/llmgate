@@ -66,6 +66,16 @@ func TestTextRedactsSecretsAndTokenPatterns(t *testing.T) {
 	}
 }
 
+func TestTextRedactsShortUnknownSKTokens(t *testing.T) {
+	got := Text("gateway said sk-abc was invalid", Options{})
+	if strings.Contains(got, "sk-abc") {
+		t.Fatalf("short sk token leaked in:\n%s", got)
+	}
+	if !strings.Contains(got, "sk-[redacted]") {
+		t.Fatalf("short sk token was not masked as expected:\n%s", got)
+	}
+}
+
 func TestShortenHomePathUnix(t *testing.T) {
 	tests := []struct {
 		name string

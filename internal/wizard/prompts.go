@@ -124,12 +124,14 @@ func promptCredentials(ctx context.Context, prompts Prompter, defaults credentia
 	if baseURLDefault != "" {
 		baseURLDefault = safeBaseURLDefault(baseURLDefault, []string{token}, display)
 	}
+	baseURLPlaceholder := ""
 	if baseURLDefault == "" {
-		baseURLDefault = core.DefaultBaseURLPlaceholder
+		baseURLPlaceholder = core.DefaultBaseURLPlaceholder
 	}
 	baseURL, err := prompts.Input(ctx, InputPrompt{
 		Title:       "LiteLLM gateway base URL",
 		Description: "Use the gateway root URL. llmgate will validate /v1/models or /models fallback.",
+		Placeholder: baseURLPlaceholder,
 		Default:     baseURLDefault,
 		Required:    true,
 	})

@@ -192,6 +192,13 @@ func (f *trackingFS) WriteFile(path string, data []byte, mode fs.FileMode) error
 	return nil
 }
 
+func (f *trackingFS) WriteFileExclusive(path string, data []byte, mode fs.FileMode) error {
+	if _, ok := f.files[path]; ok {
+		return fs.ErrExist
+	}
+	return f.WriteFile(path, data, mode)
+}
+
 func (f *trackingFS) MkdirAll(path string, _ fs.FileMode) error {
 	f.mkdirOps++
 	f.addDir(path)

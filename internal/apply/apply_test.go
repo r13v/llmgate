@@ -106,9 +106,12 @@ func TestUpdateExistingFileCreatesTimestampedBackupAtomicallyAndIdempotentRerunS
 	if got := string(fileSystem.files[backupPath]); got != string(original) {
 		t.Fatalf("backup content changed:\n%s", got)
 	}
+	if got := string(fileSystem.files[path+".llmgate.bak"]); got != "previous backup" {
+		t.Fatalf("primary backup was overwritten: %q", got)
+	}
 	assertFileContains(t, fileSystem, path, "\"theme\": \"dark\"")
 	assertFileContains(t, fileSystem, path, values.AuthToken)
-	assertRename(t, fileSystem, path+".llmgate.tmp", path)
+	assertRandomTempRename(t, fileSystem, path)
 	if mode := fileSystem.modes[path]; mode != 0o600 {
 		t.Fatalf("final mode = %v, want 0600", mode)
 	}
@@ -136,6 +139,75 @@ func TestUpdateExistingFileCreatesTimestampedBackupAtomicallyAndIdempotentRerunS
 	}
 	if len(fileSystem.writes) != writesAfterFirstApply || len(fileSystem.renames) != renamesAfterFirstApply {
 		t.Fatalf("idempotent apply wrote files: writes %d->%d renames %d->%d", writesAfterFirstApply, len(fileSystem.writes), renamesAfterFirstApply, len(fileSystem.renames))
+	}
+}
+
+func TestApplyRetriesRandomTempNameCollision(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.claude/settings.json"
+	collided := false
+	fileSystem.exclusiveHook = func(candidate string) error {
+		if strings.HasPrefix(candidate, path+".llmgate.") && strings.HasSuffix(candidate, ".tmp") && !collided {
+			collided = true
+			return fs.ErrExist
+		}
+		return nil
+	}
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(false), []core.WriteTarget{
+		writeTarget(core.WriteTargetClaudeUserSettings, path, false),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	if _, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{}); err != nil {
+		t.Fatalf("Apply() after temp collision error = %v", err)
+	}
+
+	if !collided {
+		t.Fatalf("temp collision hook was not exercised")
+	}
+	assertRandomTempRename(t, fileSystem, path)
+	assertFileContains(t, fileSystem, path, values.AuthToken)
+}
+
+func TestBackupRetriesWhenPrimaryExclusiveCreateCollides(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.claude/settings.json"
+	original := []byte("{\"env\":{\"ANTHROPIC_AUTH_TOKEN\":\"sk-oldsecret1234\"}}\n")
+	fileSystem.addFile(path, original, 0o600)
+	collided := false
+	fileSystem.exclusiveHook = func(candidate string) error {
+		if candidate == path+".llmgate.bak" && !collided {
+			collided = true
+			return fs.ErrExist
+		}
+		return nil
+	}
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(true), []core.WriteTarget{
+		writeTarget(core.WriteTargetClaudeUserSettings, path, true),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	now := time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC)
+	result, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatalf("Apply() after backup collision error = %v", err)
+	}
+
+	if !collided {
+		t.Fatalf("backup collision hook was not exercised")
+	}
+	backupPath := path + ".llmgate.20260513-010203.bak"
+	if result.Targets[0].BackupPath != backupPath {
+		t.Fatalf("backup path = %q, want %q", result.Targets[0].BackupPath, backupPath)
+	}
+	if got := string(fileSystem.files[backupPath]); got != string(original) {
+		t.Fatalf("backup content changed:\n%s", got)
 	}
 }
 
@@ -532,14 +604,14 @@ func assertNotContains(t *testing.T, got, want string) {
 	}
 }
 
-func assertRename(t *testing.T, fileSystem *testFileSystem, oldPath, newPath string) {
+func assertRandomTempRename(t *testing.T, fileSystem *testFileSystem, newPath string) {
 	t.Helper()
 	for _, rename := range fileSystem.renames {
-		if rename.oldPath == oldPath && rename.newPath == newPath {
+		if rename.newPath == newPath && strings.HasPrefix(rename.oldPath, newPath+".llmgate.") && strings.HasSuffix(rename.oldPath, ".tmp") {
 			return
 		}
 	}
-	t.Fatalf("rename %s -> %s not found in %#v", oldPath, newPath, fileSystem.renames)
+	t.Fatalf("random temp rename to %s not found in %#v", newPath, fileSystem.renames)
 }
 
 func changeNames(changes []Change) []string {
@@ -570,12 +642,14 @@ func contains(values []string, value string) bool {
 }
 
 type testFileSystem struct {
-	files    map[string][]byte
-	modes    map[string]fs.FileMode
-	dirs     map[string]bool
-	writes   []string
-	renames  []testRename
-	writeErr error
+	files           map[string][]byte
+	modes           map[string]fs.FileMode
+	dirs            map[string]bool
+	writes          []string
+	renames         []testRename
+	writeErr        error
+	exclusiveWrites []string
+	exclusiveHook   func(path string) error
 }
 
 type testRename struct {
@@ -626,6 +700,22 @@ func (f *testFileSystem) WriteFile(path string, data []byte, mode fs.FileMode) e
 	f.modes[path] = mode
 	f.addDir(parentDir(path))
 	return nil
+}
+
+func (f *testFileSystem) WriteFileExclusive(path string, data []byte, mode fs.FileMode) error {
+	if f.writeErr != nil {
+		return f.writeErr
+	}
+	if f.exclusiveHook != nil {
+		if err := f.exclusiveHook(path); err != nil {
+			return err
+		}
+	}
+	if _, ok := f.files[path]; ok {
+		return fs.ErrExist
+	}
+	f.exclusiveWrites = append(f.exclusiveWrites, path)
+	return f.WriteFile(path, data, mode)
 }
 
 func (f *testFileSystem) MkdirAll(path string, _ fs.FileMode) error {

@@ -2,8 +2,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"strings"
 	"testing"
+
+	"github.com/r13v/llmgate/internal/wizard"
 )
 
 func TestRunHelp(t *testing.T) {
@@ -57,6 +61,56 @@ func TestRunNoArgsRequiresInteractiveTerminal(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "requires an interactive terminal") {
 		t.Fatalf("no-arg stderr missing interactive terminal message: %q", stderr.String())
+	}
+}
+
+func TestRunNoArgsStartupDeclineIsAlreadyHandled(t *testing.T) {
+	originalRunWizard := runWizardFn
+	runWizardFn = func(_ io.Writer) error {
+		return wizard.ErrStartupDeclined
+	}
+	defer func() {
+		runWizardFn = originalRunWizard
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run(nil, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("run returned %d, want 0", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("startup decline wrote stdout: %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("startup decline wrote stderr: %q", stderr.String())
+	}
+}
+
+func TestRunNoArgsPropagatesOtherWizardErrors(t *testing.T) {
+	originalRunWizard := runWizardFn
+	runWizardFn = func(_ io.Writer) error {
+		return errors.New("boom")
+	}
+	defer func() {
+		runWizardFn = originalRunWizard
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run(nil, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("run returned %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("wizard error wrote stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "boom") {
+		t.Fatalf("wizard error missing stderr: %q", stderr.String())
 	}
 }
 

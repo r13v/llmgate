@@ -3,7 +3,6 @@ package apply
 import (
 	"fmt"
 	"io/fs"
-	"strings"
 	"time"
 
 	"github.com/r13v/llmgate/internal/system"
@@ -19,46 +18,34 @@ func createBackup(fileSystem system.FileSystem, target TargetPlan, now time.Time
 	if !target.OriginalExists {
 		return "", nil
 	}
-	backupPath, err := chooseBackupPath(fileSystem, target.Target.Path, now)
-	if err != nil {
+	mode := fileMode(target.Sensitive)
+	primary := target.Target.Path + ".llmgate.bak"
+	if err := writeBackup(fileSystem, primary, target.Original, mode); err == nil {
+		return primary, nil
+	} else if !isExist(err) {
 		return "", err
 	}
-	mode := fileMode(target.Sensitive)
-	if err := fileSystem.WriteFile(backupPath, target.Original, mode); err != nil {
-		return "", fmt.Errorf("write backup %s: %w", backupPath, err)
-	}
-	bestEffortChmod(fileSystem, backupPath, mode)
-	return backupPath, nil
-}
 
-func chooseBackupPath(fileSystem system.FileSystem, path string, now time.Time) (string, error) {
-	primary := path + ".llmgate.bak"
-	_, err := fileSystem.Stat(primary)
-	if err != nil {
-		if isNotExist(err) {
-			return primary, nil
-		}
-		return "", fmt.Errorf("check backup path %s: %w", primary, err)
-	}
-
-	timestamped := fmt.Sprintf("%s.llmgate.%s.bak", path, now.UTC().Format("20060102-150405"))
-	return firstAvailableBackupPath(fileSystem, timestamped)
-}
-
-func firstAvailableBackupPath(fileSystem system.FileSystem, timestamped string) (string, error) {
+	timestamped := fmt.Sprintf("%s.llmgate.%s", target.Target.Path, now.UTC().Format("20060102-150405"))
 	for index := 0; ; index++ {
-		candidate := timestamped
+		candidate := timestamped + ".bak"
 		if index > 0 {
-			candidate = fmt.Sprintf("%s.%d.bak", strings.TrimSuffix(timestamped, ".bak"), index)
+			candidate = fmt.Sprintf("%s.%d.bak", timestamped, index)
 		}
-		_, err := fileSystem.Stat(candidate)
-		if err != nil {
-			if isNotExist(err) {
-				return candidate, nil
-			}
-			return "", fmt.Errorf("check backup path %s: %w", candidate, err)
+		if err := writeBackup(fileSystem, candidate, target.Original, mode); err == nil {
+			return candidate, nil
+		} else if !isExist(err) {
+			return "", err
 		}
 	}
+}
+
+func writeBackup(fileSystem system.FileSystem, path string, content []byte, mode fs.FileMode) error {
+	if err := fileSystem.WriteFileExclusive(path, content, mode); err != nil {
+		return fmt.Errorf("create backup %s: %w", path, err)
+	}
+	bestEffortChmod(fileSystem, path, mode)
+	return nil
 }
 
 func fileMode(sensitive bool) fs.FileMode {

@@ -341,6 +341,11 @@ func (f *testFileSystem) WriteFile(string, []byte, fs.FileMode) error {
 	return nil
 }
 
+func (f *testFileSystem) WriteFileExclusive(string, []byte, fs.FileMode) error {
+	f.writes++
+	return nil
+}
+
 func (f *testFileSystem) MkdirAll(string, fs.FileMode) error {
 	f.writes++
 	return nil
@@ -504,6 +509,10 @@ func (panicFileSystem) ReadFile(string) ([]byte, error) {
 
 func (panicFileSystem) WriteFile(string, []byte, fs.FileMode) error {
 	panic("unexpected write")
+}
+
+func (panicFileSystem) WriteFileExclusive(string, []byte, fs.FileMode) error {
+	panic("unexpected exclusive write")
 }
 
 func (panicFileSystem) MkdirAll(string, fs.FileMode) error {

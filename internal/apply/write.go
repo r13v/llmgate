@@ -2,6 +2,8 @@ package apply
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io/fs"
 	"time"
@@ -139,16 +141,38 @@ func verifyTargetUnchanged(fileSystem system.FileSystem, target TargetPlan) erro
 }
 
 func writeAtomic(fileSystem system.FileSystem, path string, content []byte, mode fs.FileMode) error {
-	tempPath := path + ".llmgate.tmp"
-	if err := fileSystem.WriteFile(tempPath, content, mode); err != nil {
-		return fmt.Errorf("write temporary file %s: %w", tempPath, err)
+	var lastErr error
+	for range 16 {
+		tempPath, err := tempFilePath(path)
+		if err != nil {
+			return fmt.Errorf("create temporary path for %s: %w", path, err)
+		}
+		if err := fileSystem.WriteFileExclusive(tempPath, content, mode); err != nil {
+			if isExist(err) {
+				lastErr = err
+				continue
+			}
+			return fmt.Errorf("create temporary file %s: %w", tempPath, err)
+		}
+		bestEffortChmod(fileSystem, tempPath, mode)
+		if err := fileSystem.Rename(tempPath, path); err != nil {
+			_ = fileSystem.Remove(tempPath)
+			return fmt.Errorf("replace %s: %w", path, err)
+		}
+		return nil
 	}
-	bestEffortChmod(fileSystem, tempPath, mode)
-	if err := fileSystem.Rename(tempPath, path); err != nil {
-		_ = fileSystem.Remove(tempPath)
-		return fmt.Errorf("replace %s: %w", path, err)
+	if lastErr == nil {
+		lastErr = fs.ErrExist
 	}
-	return nil
+	return fmt.Errorf("create temporary file for %s: %w", path, lastErr)
+}
+
+func tempFilePath(path string) (string, error) {
+	var random [8]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s.llmgate.%s.tmp", path, hex.EncodeToString(random[:])), nil
 }
 
 func shouldCreateParent(kind core.WriteTargetKind) bool {

@@ -108,12 +108,12 @@
 - Create: `internal/redact/redact_test.go`
 - Create: `internal/core/core_test.go`
 
-- [ ] Define managed variables, required values, behavior/privacy defaults, write target types, source labels, resolved config structures, and diagnostic status model.
-- [ ] Implement aggregate diagnostic severity ordering: `OK < SKIP < WARN < FAIL`.
-- [ ] Implement secret masking for exact known secrets, bearer headers, `x-litellm-api-key`, `sk-...`, and `ANTHROPIC_AUTH_TOKEN` assignment forms.
-- [ ] Implement home path shortening with platform-aware separators.
-- [ ] Add tests covering redaction hard requirements, short/long token display, path shortening, and diagnostic aggregation.
-- [ ] Run focused package tests before moving on.
+- [x] Define managed variables, required values, behavior/privacy defaults, write target types, source labels, resolved config structures, and diagnostic status model.
+- [x] Implement aggregate diagnostic severity ordering: `OK < SKIP < WARN < FAIL`.
+- [x] Implement secret masking for exact known secrets, bearer headers, `x-litellm-api-key`, `sk-...`, and `ANTHROPIC_AUTH_TOKEN` assignment forms.
+- [x] Implement home path shortening with platform-aware separators.
+- [x] Add tests covering redaction hard requirements, short/long token display, path shortening, and diagnostic aggregation.
+- [x] Run focused package tests before moving on.
 
 ### Task 3: System Abstractions and Platform Paths
 **Files:**

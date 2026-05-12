@@ -269,13 +269,14 @@
 - Create: `internal/e2e/wizard_accessible_test.go`
 - Create: `internal/e2e/wizard_pty_test.go`
 - Create: `internal/e2e/acceptance_test.go`
+- Create: `internal/e2e/acceptance_helpers_test.go`
 
-- [ ] Build e2e harness with temp HOME/CWD, fake platform, fake command runner, fake Windows user env, fake gateway, and scripted wizard input.
-- [ ] Add accessible wizard e2e tests for all acceptance scenario groups in `docs/PROJECT_SPEC.md`.
-- [ ] Add real `xpty` smoke tests for no-arg interactive startup, password/token prompt, cancellation, and non-interactive failure.
-- [ ] Gate the full matrix behind `//go:build e2e` while keeping a small smoke subset in default tests.
-- [ ] Ensure tests assert no secret leakage and no forbidden reads/writes before startup approval.
-- [ ] Run `go test ./...` and `go test -tags=e2e ./...`.
+- [x] Build e2e harness with temp HOME/CWD, fake platform, fake command runner, fake Windows user env, fake gateway, and scripted wizard input.
+- [x] Add accessible wizard e2e tests for all acceptance scenario groups in `docs/PROJECT_SPEC.md`.
+- [x] Add real `xpty` smoke tests for no-arg interactive startup, password/token prompt, cancellation, and non-interactive failure.
+- [x] Gate the full matrix behind `//go:build e2e` while keeping a small smoke subset in default tests.
+- [x] Ensure tests assert no secret leakage and no forbidden reads/writes before startup approval.
+- [x] Run `go test ./...` and `go test -tags=e2e ./...`.
 
 ### Task 12: CI Workflows
 **Files:**

@@ -284,13 +284,13 @@
 - Create: `.github/dependabot.yml`
 - Modify: `README.md`
 
-- [ ] Add CI matrix for Linux, macOS, and Windows using `actions/checkout@v6` and `actions/setup-go@v6` with fixed Go `1.26.3`.
-- [ ] Run `make fmt`, `make lint`, `make test`, and `make test-e2e` in CI.
-- [ ] Use `golangci/golangci-lint-action@v9` with pinned golangci-lint `v2.12.2`.
-- [ ] Add shellcheck for `scripts/install.sh` once that script exists.
-- [ ] Add PowerShell smoke for `scripts/install.ps1` once that script exists.
-- [ ] Add Dependabot configuration for GitHub Actions major-tag updates where useful, without changing the chosen major-tag style.
-- [ ] Run local workflow-equivalent commands where possible.
+- [x] Add CI matrix for Linux, macOS, and Windows using `actions/checkout@v6` and `actions/setup-go@v6` with fixed Go `1.26.3`.
+- [x] Run `make fmt`, `make lint`, `make test`, and `make test-e2e` in CI.
+- [x] Use `golangci/golangci-lint-action@v9` with pinned golangci-lint `v2.12.2`.
+- [x] Add shellcheck for `scripts/install.sh` once that script exists.
+- [x] Add PowerShell smoke for `scripts/install.ps1` once that script exists.
+- [x] Add Dependabot configuration for GitHub Actions major-tag updates where useful, without changing the chosen major-tag style.
+- [x] Run local workflow-equivalent commands where possible.
 
 ### Task 13: Rolling `main` Release Workflow
 **Files:**

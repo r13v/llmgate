@@ -140,6 +140,18 @@ func simpleAssignment(name, value string, line int, comment string) Assignment {
 	}
 }
 
+func exportedSimpleAssignment(name, value string, line int, comment string) Assignment {
+	assignment := simpleAssignment(name, value, line, comment)
+	assignment.Exports = true
+	return assignment
+}
+
+func inheritingSimpleAssignment(name, value string, line int, comment string) Assignment {
+	assignment := simpleAssignment(name, value, line, comment)
+	assignment.InheritsExport = true
+	return assignment
+}
+
 func dynamicAssignment(name string, line int, comment string) Assignment {
 	return Assignment{
 		Name:    name,
@@ -149,7 +161,27 @@ func dynamicAssignment(name string, line int, comment string) Assignment {
 	}
 }
 
+func exportedDynamicAssignment(name string, line int, comment string) Assignment {
+	assignment := dynamicAssignment(name, line, comment)
+	assignment.Exports = true
+	return assignment
+}
+
+func inheritingDynamicAssignment(name string, line int, comment string) Assignment {
+	assignment := dynamicAssignment(name, line, comment)
+	assignment.InheritsExport = true
+	return assignment
+}
+
 func complexAssignments(line string, lineNumber int, comment string, names []string) []Assignment {
+	return complexAssignmentsWithExports(line, lineNumber, comment, names, false)
+}
+
+func exportedComplexAssignments(line string, lineNumber int, comment string, names []string) []Assignment {
+	return complexAssignmentsWithExports(line, lineNumber, comment, names, true)
+}
+
+func complexAssignmentsWithExports(line string, lineNumber int, comment string, names []string, exports bool) []Assignment {
 	names = uniqueStrings(names)
 	assignments := make([]Assignment, 0, len(names))
 	for _, name := range names {
@@ -161,6 +193,7 @@ func complexAssignments(line string, lineNumber int, comment string, names []str
 			Line:    lineNumber,
 			Kind:    AssignmentComplex,
 			Comment: comment,
+			Exports: exports,
 		})
 	}
 	return assignments

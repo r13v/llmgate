@@ -12,7 +12,7 @@ func TestParsePOSIXProfilesReadSimpleAssignmentsAndIgnoreComments(t *testing.T) 
 	input := []byte(strings.Join([]string{
 		"# export ANTHROPIC_AUTH_TOKEN='sk-commented123456'",
 		"export ANTHROPIC_AUTH_TOKEN='sk-active123456'",
-		"ANTHROPIC_BASE_URL=https://gateway.example.com # keep this",
+		"ANTHROPIC_BASE_URL=https://gateway.example.com # not exported",
 		"export PATH='/usr/bin'",
 		"",
 	}, "\n"))
@@ -24,7 +24,7 @@ func TestParsePOSIXProfilesReadSimpleAssignmentsAndIgnoreComments(t *testing.T) 
 				t.Fatalf("ParseProfile() error = %v", err)
 			}
 			assertProfileValue(t, profile, core.VarAnthropicAuthToken, "sk-active123456", 2)
-			assertProfileValue(t, profile, core.VarAnthropicBaseURL, "https://gateway.example.com", 3)
+			assertProfileValueMissing(t, profile, core.VarAnthropicBaseURL)
 			if _, ok := profile.Values["PATH"]; ok {
 				t.Fatalf("unmanaged PATH should not be read")
 			}
@@ -57,6 +57,35 @@ func TestParseDetectsDuplicateDynamicAndComplexPOSIXAssignments(t *testing.T) {
 	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicDefaultOpusModel, 5)
 	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicBaseURL, 6)
 	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicAuthToken, 6)
+}
+
+func TestParseOnlyExportedShellAssignmentsAreEffective(t *testing.T) {
+	posixProfile, err := ParseProfile([]byte(strings.Join([]string{
+		"ANTHROPIC_AUTH_TOKEN='sk-local123456'",
+		"export ANTHROPIC_BASE_URL='https://old.example.com'",
+		"ANTHROPIC_BASE_URL='https://new.example.com'",
+		"",
+	}, "\n")), SyntaxPOSIX)
+	if err != nil {
+		t.Fatalf("ParseProfile(POSIX) error = %v", err)
+	}
+	assertProfileValueMissing(t, posixProfile, core.VarAnthropicAuthToken)
+	assertProfileValue(t, posixProfile, core.VarAnthropicBaseURL, "https://new.example.com", 3)
+
+	fishProfile, err := ParseProfile([]byte(strings.Join([]string{
+		"set ANTHROPIC_AUTH_TOKEN 'sk-local123456'",
+		"set -l ANTHROPIC_BASE_URL 'https://local.example.com'",
+		"set --export ANTHROPIC_MODEL 'claude-sonnet'",
+		"",
+	}, "\n")), SyntaxFish)
+	if err != nil {
+		t.Fatalf("ParseProfile(fish) error = %v", err)
+	}
+	assertProfileValueMissing(t, fishProfile, core.VarAnthropicAuthToken)
+	assertProfileValueMissing(t, fishProfile, core.VarAnthropicBaseURL)
+	assertProfileValue(t, fishProfile, core.VarAnthropicModel, "claude-sonnet", 3)
+	assertIssue(t, fishProfile.Manual, IssueComplex, core.VarAnthropicAuthToken, 1)
+	assertIssue(t, fishProfile.Manual, IssueComplex, core.VarAnthropicBaseURL, 2)
 }
 
 func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
@@ -216,6 +245,13 @@ func assertProfileValue(t *testing.T, profile Profile, name, value string, line 
 	}
 	if got.Value != value || got.Line != line {
 		t.Fatalf("Values[%s] = {%q line %d}, want {%q line %d}", name, got.Value, got.Line, value, line)
+	}
+}
+
+func assertProfileValueMissing(t *testing.T, profile Profile, name string) {
+	t.Helper()
+	if got, ok := profile.Values[name]; ok {
+		t.Fatalf("Values[%s] = %#v, want missing", name, got)
 	}
 }
 

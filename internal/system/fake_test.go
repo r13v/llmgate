@@ -45,6 +45,13 @@ func (f *FakeFileSystem) WriteFile(name string, data []byte, perm fs.FileMode) e
 	return nil
 }
 
+func (f *FakeFileSystem) WriteFileExclusive(name string, data []byte, perm fs.FileMode) error {
+	if _, ok := f.entries[name]; ok {
+		return fs.ErrExist
+	}
+	return f.WriteFile(name, data, perm)
+}
+
 func (f *FakeFileSystem) MkdirAll(name string, perm fs.FileMode) error {
 	f.entries[name] = fakeFileEntry{mode: perm | fs.ModeDir, dir: true}
 	return nil

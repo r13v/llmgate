@@ -455,3 +455,7 @@ func fsOrDefault(fileSystem system.FileSystem) system.FileSystem {
 func isNotExist(err error) bool {
 	return errors.Is(err, fs.ErrNotExist)
 }
+
+func isExist(err error) bool {
+	return errors.Is(err, fs.ErrExist)
+}

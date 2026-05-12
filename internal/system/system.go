@@ -1,7 +1,9 @@
 package system
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"runtime"
@@ -14,6 +16,7 @@ var ErrUnsupportedWindowsUserEnvironment = errors.New("windows user environment 
 type FileSystem interface {
 	ReadFile(name string) ([]byte, error)
 	WriteFile(name string, data []byte, perm fs.FileMode) error
+	WriteFileExclusive(name string, data []byte, perm fs.FileMode) error
 	MkdirAll(path string, perm fs.FileMode) error
 	Stat(name string) (fs.FileInfo, error)
 	Rename(oldPath, newPath string) error
@@ -29,6 +32,23 @@ func (RealFileSystem) ReadFile(name string) ([]byte, error) {
 
 func (RealFileSystem) WriteFile(name string, data []byte, perm fs.FileMode) error {
 	return os.WriteFile(name, data, perm)
+}
+
+func (RealFileSystem) WriteFileExclusive(name string, data []byte, perm fs.FileMode) error {
+	file, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(file, bytes.NewReader(data)); err != nil {
+		_ = file.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
+	}
+	return nil
 }
 
 func (RealFileSystem) MkdirAll(path string, perm fs.FileMode) error {

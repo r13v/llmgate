@@ -150,6 +150,32 @@ func TestCredentialPromptRedactsAndCanonicalizesExistingBaseURL(t *testing.T) {
 	assertContains(t, renderedPrompts, "https://gateway.example.com/proxy/v1")
 }
 
+func TestCredentialPromptUsesPlaceholderNotDefaultForMissingBaseURL(t *testing.T) {
+	token := "sk-goodtoken1234567890"
+	baseURL := "https://gateway.example.com"
+	prompts := &credentialPrompter{inputResponses: []string{token, baseURL}}
+
+	gotToken, gotBaseURL, err := promptCredentials(context.Background(), prompts, credentialDefaults{}, displayOptions{HomeDir: "/home/ada", GOOS: "linux"})
+	if err != nil {
+		t.Fatalf("promptCredentials() error = %v", err)
+	}
+	if gotToken != token {
+		t.Fatalf("token = %q, want prompted token", gotToken)
+	}
+	if gotBaseURL != baseURL {
+		t.Fatalf("base URL = %q, want prompted base URL", gotBaseURL)
+	}
+	if len(prompts.inputDefaults) != 2 {
+		t.Fatalf("input defaults = %#v, want token and base URL prompts", prompts.inputDefaults)
+	}
+	if prompts.inputDefaults[1] != "" {
+		t.Fatalf("base URL default = %q, want empty", prompts.inputDefaults[1])
+	}
+	if prompts.inputPlaceholders[1] != core.DefaultBaseURLPlaceholder {
+		t.Fatalf("base URL placeholder = %q, want %q", prompts.inputPlaceholders[1], core.DefaultBaseURLPlaceholder)
+	}
+}
+
 func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	var output bytes.Buffer
 	token := "plain-secret-token"
@@ -596,9 +622,11 @@ type recordingPrompter struct {
 }
 
 type credentialPrompter struct {
-	confirmResponses []bool
-	descriptions     []string
-	inputDefaults    []string
+	confirmResponses  []bool
+	descriptions      []string
+	inputDefaults     []string
+	inputPlaceholders []string
+	inputResponses    []string
 }
 
 func (p *recordingPrompter) Confirm(_ context.Context, prompt ConfirmPrompt) (bool, error) {
@@ -645,6 +673,12 @@ func (p *credentialPrompter) Confirm(_ context.Context, prompt ConfirmPrompt) (b
 func (p *credentialPrompter) Input(_ context.Context, prompt InputPrompt) (string, error) {
 	p.descriptions = append(p.descriptions, prompt.Description)
 	p.inputDefaults = append(p.inputDefaults, prompt.Default)
+	p.inputPlaceholders = append(p.inputPlaceholders, prompt.Placeholder)
+	if len(p.inputResponses) > 0 {
+		value := p.inputResponses[0]
+		p.inputResponses = p.inputResponses[1:]
+		return value, nil
+	}
 	return prompt.Default, nil
 }
 
@@ -843,6 +877,13 @@ func (f *wizardFileSystem) WriteFile(path string, data []byte, mode fs.FileMode)
 	return nil
 }
 
+func (f *wizardFileSystem) WriteFileExclusive(path string, data []byte, mode fs.FileMode) error {
+	if _, ok := f.files[path]; ok {
+		return fs.ErrExist
+	}
+	return f.WriteFile(path, data, mode)
+}
+
 func (f *wizardFileSystem) MkdirAll(path string, _ fs.FileMode) error {
 	f.addDir(path)
 	return nil
@@ -929,6 +970,10 @@ func (panicFileSystem) ReadFile(string) ([]byte, error) {
 
 func (panicFileSystem) WriteFile(string, []byte, fs.FileMode) error {
 	panic("unexpected write")
+}
+
+func (panicFileSystem) WriteFileExclusive(string, []byte, fs.FileMode) error {
+	panic("unexpected exclusive write")
 }
 
 func (panicFileSystem) MkdirAll(string, fs.FileMode) error {

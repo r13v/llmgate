@@ -54,13 +54,18 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprint(stdout, version.Current().String())
 		return 0
 	default:
-		if err := runWizard(stdout); err != nil {
+		if err := runWizardFn(stdout); err != nil {
+			if errors.Is(err, wizard.ErrStartupDeclined) {
+				return 0
+			}
 			_, _ = fmt.Fprintf(stderr, "llmgate: %s\n", sanitizeCLIError(err.Error()))
 			return 1
 		}
 		return 0
 	}
 }
+
+var runWizardFn = runWizard
 
 func sanitizeCLIError(value string) string {
 	home, _ := os.UserHomeDir()

@@ -27,6 +27,8 @@ func parsePOSIXLine(line string, lineNumber int) []Assignment {
 		return complexAssignments(line, lineNumber, comment, names)
 	case "export":
 		return parsePOSIXExport(line, lineNumber, comment, words[1:])
+	case "unset":
+		return parsePOSIXUnset(line, lineNumber, comment, words[1:])
 	default:
 		return parsePOSIXBareAssignment(line, lineNumber, comment, words)
 	}
@@ -36,6 +38,9 @@ func parsePOSIXExport(line string, lineNumber int, comment string, words []shell
 	names := managedNamesInWords(words)
 	if len(names) == 0 {
 		return nil
+	}
+	if posixExportMarksUnexport(words) {
+		return unexportingStateAssignments(lineNumber, comment, names)
 	}
 	exports := posixExportMarksExport(words)
 	if len(words) != 1 {
@@ -61,6 +66,17 @@ func parsePOSIXExport(line string, lineNumber int, comment string, words []shell
 	return []Assignment{exportedSimpleAssignment(name, value, lineNumber, comment)}
 }
 
+func parsePOSIXUnset(line string, lineNumber int, comment string, words []shellWord) []Assignment {
+	names := managedNamesInWords(words)
+	if len(names) == 0 {
+		return nil
+	}
+	if !posixUnsetMarksVariable(words) {
+		return complexAssignments(line, lineNumber, comment, names)
+	}
+	return unexportingStateAssignments(lineNumber, comment, names)
+}
+
 func parsePOSIXBareAssignment(line string, lineNumber int, comment string, words []shellWord) []Assignment {
 	names := managedNamesInWords(words)
 	if len(names) == 0 {
@@ -80,6 +96,22 @@ func parsePOSIXBareAssignment(line string, lineNumber int, comment string, words
 	return []Assignment{inheritingSimpleAssignment(name, value, lineNumber, comment)}
 }
 
+func posixExportMarksUnexport(words []shellWord) bool {
+	for _, word := range words {
+		text := word.Text
+		if text == "--" {
+			return false
+		}
+		if !strings.HasPrefix(text, "-") || text == "-" {
+			return false
+		}
+		if strings.Contains(text[1:], "n") {
+			return true
+		}
+	}
+	return false
+}
+
 func posixExportMarksExport(words []shellWord) bool {
 	for _, word := range words {
 		text := word.Text
@@ -94,6 +126,26 @@ func posixExportMarksExport(words []shellWord) bool {
 		}
 	}
 	return true
+}
+
+func posixUnsetMarksVariable(words []shellWord) bool {
+	for _, word := range words {
+		text := word.Text
+		if text == "--" {
+			return true
+		}
+		if !strings.HasPrefix(text, "-") || text == "-" {
+			return true
+		}
+		options := text[1:]
+		if strings.Contains(options, "f") {
+			return false
+		}
+		if strings.Trim(options, "v") != "" {
+			return false
+		}
+	}
+	return false
 }
 
 func posixDeclareExports(words []shellWord) bool {

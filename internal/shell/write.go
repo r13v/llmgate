@@ -24,6 +24,7 @@ func UpsertProfile(data []byte, syntax Syntax, values map[string]string, mode Wr
 	updatedNames := make(map[string]bool)
 	lastAssignments := make(map[string]Assignment)
 	skipped := make([]Issue, 0)
+	changed := false
 
 	for i, line := range lines {
 		assignments := parser(line.Text, i+1)
@@ -59,35 +60,46 @@ func UpsertProfile(data []byte, syntax Syntax, values map[string]string, mode Wr
 			if !ok || assignment.Kind != AssignmentSimple {
 				continue
 			}
+			updatedNames[assignment.Name] = true
+			if assignment.Value == value {
+				continue
+			}
 			updated := assignment
 			updated.Value = value
 			rewritten = &updated
-			updatedNames[assignment.Name] = true
 			break
 		}
 		if rewritten != nil {
-			lines[i].Text = formatAssignment(syntax, rewritten.Name, rewritten.Value) + rewritten.Comment
+			text := formatAssignment(syntax, rewritten.Name, rewritten.Value) + rewritten.Comment
+			if lines[i].Text != text {
+				lines[i].Text = text
+				changed = true
+			}
 		}
 	}
 
 	if mode == ModeSetup {
-		appendMissing(&lines, syntax, values, effectiveUpdatedNames(updatedNames, lastAssignments))
+		changed = appendMissing(&lines, syntax, values, effectiveUpdatedNames(updatedNames, lastAssignments)) || changed
 	}
 
-	output := renderLines(lines)
+	output := append([]byte(nil), data...)
+	if changed {
+		output = renderLines(lines)
+	}
 	profile, err := ParseProfile(output, syntax)
 	if err != nil {
 		return nil, WriteResult{}, err
 	}
 	result := WriteResult{
 		Profile: profile,
-		Changed: string(output) != string(data),
+		Changed: changed,
 		Skipped: skipped,
 	}
 	return output, result, nil
 }
 
-func appendMissing(lines *[]parsedLine, syntax Syntax, values map[string]string, updatedNames map[string]bool) {
+func appendMissing(lines *[]parsedLine, syntax Syntax, values map[string]string, updatedNames map[string]bool) bool {
+	changed := false
 	for _, name := range orderedManagedNames(values) {
 		if updatedNames[name] {
 			continue
@@ -96,7 +108,9 @@ func appendMissing(lines *[]parsedLine, syntax Syntax, values map[string]string,
 			Text: formatAssignment(syntax, name, values[name]),
 			EOL:  "\n",
 		})
+		changed = true
 	}
+	return changed
 }
 
 func effectiveUpdatedNames(updatedNames map[string]bool, lastAssignments map[string]Assignment) map[string]bool {

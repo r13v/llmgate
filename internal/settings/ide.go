@@ -63,38 +63,48 @@ func UpsertIDE(data []byte, selectedModel string, values map[string]string) ([]b
 		return nil, err
 	}
 
-	upsertObjectString(root, ideSelectedModelKey, selectedModel)
+	changed := upsertObjectString(root, ideSelectedModelKey, selectedModel)
 
-	envArray, err := ensureArrayMember(root, ideEnvironmentKey, "IDE")
+	envArray, envChanged, err := ensureArrayMember(root, ideEnvironmentKey, "IDE")
 	if err != nil {
 		return nil, err
 	}
+	changed = changed || envChanged
 
-	present := updateIDEEnvironmentEntries(envArray, values)
+	present, entriesChanged := updateIDEEnvironmentEntries(envArray, values)
+	changed = changed || entriesChanged
 	for _, name := range orderedNames(values) {
 		if present[name] {
 			continue
 		}
 		envArray.Elements = append(envArray.Elements, newIDEEnvironmentEntry(name, values[name]))
+		changed = true
+	}
+
+	if !changed && data != nil {
+		return append([]byte(nil), data...), nil
 	}
 
 	return packFormatted(&doc), nil
 }
 
-func ensureArrayMember(root *hujson.Object, name, label string) (*hujson.Array, error) {
+func ensureArrayMember(root *hujson.Object, name, label string) (*hujson.Array, bool, error) {
+	changed := false
 	member := firstObjectMember(root, name)
 	if member == nil {
 		member = upsertObjectValue(root, name, newArrayValue())
+		changed = true
 	}
 	array, ok := arrayValue(member.Value)
 	if !ok {
-		return nil, malformed(label, fmt.Sprintf("%q must be an array", name))
+		return nil, false, malformed(label, fmt.Sprintf("%q must be an array", name))
 	}
-	return array, nil
+	return array, changed, nil
 }
 
-func updateIDEEnvironmentEntries(envArray *hujson.Array, values map[string]string) map[string]bool {
+func updateIDEEnvironmentEntries(envArray *hujson.Array, values map[string]string) (map[string]bool, bool) {
 	present := make(map[string]bool, len(values))
+	changed := false
 	for i := range envArray.Elements {
 		entry, ok := objectValue(envArray.Elements[i])
 		if !ok {
@@ -112,10 +122,10 @@ func updateIDEEnvironmentEntries(envArray *hujson.Array, values map[string]strin
 		if !ok {
 			continue
 		}
-		upsertObjectString(entry, "value", value)
+		changed = upsertObjectString(entry, "value", value) || changed
 		present[name] = true
 	}
-	return present
+	return present, changed
 }
 
 func newIDEEnvironmentEntry(name, value string) hujson.Value {

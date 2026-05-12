@@ -140,6 +140,20 @@ func TestUpsertClaudePreservesUnrelatedSettingsCommentsAndIsIdempotent(t *testin
 	}
 }
 
+func TestUpsertClaudeLeavesSemanticallyEqualSettingsUntouched(t *testing.T) {
+	input := []byte(`{"env":{"ANTHROPIC_BASE_URL":"https://gateway.example.com"}}`)
+
+	output, err := UpsertClaude(input, map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	})
+	if err != nil {
+		t.Fatalf("UpsertClaude() error = %v", err)
+	}
+	if string(output) != string(input) {
+		t.Fatalf("semantically equal settings were rewritten:\n%s", output)
+	}
+}
+
 func TestUpsertClaudeCreatesMissingFileAndRejectsMalformedEnv(t *testing.T) {
 	created, err := UpsertClaude(nil, map[string]string{
 		core.VarAnthropicBaseURL: "https://gateway.example.com",
@@ -255,6 +269,20 @@ func TestUpsertIDEPreservesUnrelatedSettingsEntriesCommentsAndIsIdempotent(t *te
 	}
 	if string(second) != string(output) {
 		t.Fatalf("UpsertIDE() should be idempotent\nfirst:\n%s\nsecond:\n%s", output, second)
+	}
+}
+
+func TestUpsertIDELeavesSemanticallyEqualSettingsUntouched(t *testing.T) {
+	input := []byte(`{"claudeCode.selectedModel":"claude-primary","claudeCode.environmentVariables":[{"name":"ANTHROPIC_BASE_URL","value":"https://gateway.example.com"}]}`)
+
+	output, err := UpsertIDE(input, "claude-primary", map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	})
+	if err != nil {
+		t.Fatalf("UpsertIDE() error = %v", err)
+	}
+	if string(output) != string(input) {
+		t.Fatalf("semantically equal IDE settings were rewritten:\n%s", output)
 	}
 }
 

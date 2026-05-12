@@ -82,15 +82,22 @@ func firstObjectMember(obj *hujson.Object, name string) *hujson.ObjectMember {
 	return matches[0]
 }
 
-func upsertObjectString(obj *hujson.Object, name, value string) {
+func upsertObjectString(obj *hujson.Object, name, value string) bool {
 	matches := findObjectMembers(obj, name)
 	if len(matches) == 0 {
 		obj.Members = append(obj.Members, stringMember(name, value))
-		return
+		return true
 	}
+
+	changed := false
 	for _, member := range matches {
+		if existing, ok := stringValue(member.Value); ok && existing == value {
+			continue
+		}
 		setString(&member.Value, value)
+		changed = true
 	}
+	return changed
 }
 
 func upsertObjectValue(obj *hujson.Object, name string, value hujson.Value) *hujson.ObjectMember {

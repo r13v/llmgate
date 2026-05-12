@@ -48,26 +48,32 @@ func UpsertClaude(data []byte, values map[string]string) ([]byte, error) {
 		return nil, err
 	}
 
-	envObj, err := ensureObjectMember(root, claudeEnvKey, "Claude")
+	envObj, changed, err := ensureObjectMember(root, claudeEnvKey, "Claude")
 	if err != nil {
 		return nil, err
 	}
 
 	for _, name := range orderedNames(values) {
-		upsertObjectString(envObj, name, values[name])
+		changed = upsertObjectString(envObj, name, values[name]) || changed
+	}
+
+	if !changed && data != nil {
+		return append([]byte(nil), data...), nil
 	}
 
 	return packFormatted(&doc), nil
 }
 
-func ensureObjectMember(root *hujson.Object, name, label string) (*hujson.Object, error) {
+func ensureObjectMember(root *hujson.Object, name, label string) (*hujson.Object, bool, error) {
+	changed := false
 	member := firstObjectMember(root, name)
 	if member == nil {
 		member = upsertObjectValue(root, name, newObjectValue())
+		changed = true
 	}
 	obj, ok := objectValue(member.Value)
 	if !ok {
-		return nil, malformed(label, fmt.Sprintf("%q must be an object", name))
+		return nil, false, malformed(label, fmt.Sprintf("%q must be an object", name))
 	}
-	return obj, nil
+	return obj, changed, nil
 }

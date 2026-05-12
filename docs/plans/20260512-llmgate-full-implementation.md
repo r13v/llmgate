@@ -252,15 +252,15 @@
 - Create: `internal/wizard/wizard_test.go`
 - Modify: `cmd/llmgate/main.go`
 
-- [ ] Implement non-interactive no-arg failure with a clear message.
-- [ ] Implement startup disclosure approval with strict decline/cancel no-read behavior.
-- [ ] Run initial diagnostics after approval.
-- [ ] Implement action menu with `Setup`, conditional `Repair warnings`, `Review details`, and `Exit`, including default highlighted action rules.
-- [ ] Implement existing token reuse/replacement flow, base URL prompt, gateway validation recovery, model recommendation/manual selection, probe validation, target selection, apply plan confirmation, rejected-plan return to targets, write results, and final diagnostics.
-- [ ] Implement cancellation behavior for every prompt according to spec.
-- [ ] Ensure no token appears in terminal output, errors, reports, apply plan, or write results.
-- [ ] Add deterministic accessible-input tests for prompt branching and cancellation.
-- [ ] Run focused wizard tests.
+- [x] Implement non-interactive no-arg failure with a clear message.
+- [x] Implement startup disclosure approval with strict decline/cancel no-read behavior.
+- [x] Run initial diagnostics after approval.
+- [x] Implement action menu with `Setup`, conditional `Repair warnings`, `Review details`, and `Exit`, including default highlighted action rules.
+- [x] Implement existing token reuse/replacement flow, base URL prompt, gateway validation recovery, model recommendation/manual selection, probe validation, target selection, apply plan confirmation, rejected-plan return to targets, write results, and final diagnostics.
+- [x] Implement cancellation behavior for every prompt according to spec.
+- [x] Ensure no token appears in terminal output, errors, reports, apply plan, or write results.
+- [x] Add deterministic accessible-input tests for prompt branching and cancellation.
+- [x] Run focused wizard tests.
 
 ### Task 11: Acceptance E2E Test Harness
 **Files:**

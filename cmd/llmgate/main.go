@@ -1,13 +1,16 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 
+	"github.com/r13v/llmgate/internal/system"
 	"github.com/r13v/llmgate/internal/version"
+	"github.com/r13v/llmgate/internal/wizard"
 )
 
 const usage = `llmgate configures Claude Code for a LiteLLM-compatible gateway.
@@ -47,7 +50,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprint(stdout, version.Current().String())
 		return 0
 	default:
-		if err := runWizardPlaceholder(stdout); err != nil {
+		if err := runWizard(stdout); err != nil {
 			_, _ = fmt.Fprintf(stderr, "llmgate: %v\n", err)
 			return 1
 		}
@@ -55,6 +58,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runWizardPlaceholder(_ io.Writer) error {
-	return errors.New("interactive setup wizard is not implemented yet")
+func runWizard(stdout io.Writer) error {
+	stdoutFile, _ := stdout.(*os.File)
+	sys := system.NewRealSystem(os.Stdin, stdoutFile)
+	err := wizard.Run(context.Background(), wizard.Options{
+		System: sys,
+		Input:  os.Stdin,
+		Output: stdout,
+	})
+	if errors.Is(err, wizard.ErrNonInteractive) {
+		return errors.New("no-argument setup requires an interactive terminal; run llmgate from a terminal")
+	}
+	return err
 }

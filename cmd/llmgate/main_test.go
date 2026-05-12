@@ -43,7 +43,7 @@ func TestRunVersion(t *testing.T) {
 	}
 }
 
-func TestRunNoArgsDispatchesPlaceholder(t *testing.T) {
+func TestRunNoArgsRequiresInteractiveTerminal(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -53,10 +53,10 @@ func TestRunNoArgsDispatchesPlaceholder(t *testing.T) {
 		t.Fatalf("run returned %d, want 1", code)
 	}
 	if stdout.Len() != 0 {
-		t.Fatalf("no-arg placeholder wrote stdout: %q", stdout.String())
+		t.Fatalf("no-arg failure wrote stdout: %q", stdout.String())
 	}
-	if !strings.Contains(stderr.String(), "interactive setup wizard is not implemented yet") {
-		t.Fatalf("no-arg placeholder stderr missing implementation message: %q", stderr.String())
+	if !strings.Contains(stderr.String(), "requires an interactive terminal") {
+		t.Fatalf("no-arg stderr missing interactive terminal message: %q", stderr.String())
 	}
 }
 

@@ -94,6 +94,7 @@ func TestReleaseWorkflowMatchesPlan(t *testing.T) {
 		"--prerelease",
 		"--target \"${GITHUB_SHA}\"",
 		"Rolling main prerelease for commit ${COMMIT_SHA}.",
+		"Installer scripts are attached as install.sh and install.ps1.",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release workflow missing %q", want)
@@ -124,6 +125,7 @@ func TestReadmeDocumentsRollingMainRelease(t *testing.T) {
 		"llmgate-main-linux-amd64.tar.gz",
 		"llmgate-main-windows-arm64.zip",
 		"`checksums.txt` contains SHA-256 digests",
+		"also attaches `install.sh` and `install.ps1`",
 		"Release notes include",
 	} {
 		if !strings.Contains(readme, want) {
@@ -163,6 +165,8 @@ func TestPackageScriptDryRunListsReleaseTargets(t *testing.T) {
 		"windows-amd64 -> " + filepath.Join(distDir, "llmgate-main-windows-amd64.zip"),
 		"windows-arm64 -> " + filepath.Join(distDir, "llmgate-main-windows-arm64.zip"),
 		"checksums -> " + filepath.Join(distDir, "checksums.txt"),
+		"install.sh -> " + filepath.Join(distDir, "install.sh"),
+		"install.ps1 -> " + filepath.Join(distDir, "install.ps1"),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("package dry-run missing %q in:\n%s", want, got)
@@ -203,12 +207,30 @@ func TestPackageScriptCreatesArchivesAndChecksums(t *testing.T) {
 		"llmgate-main-windows-amd64.zip",
 		"llmgate-main-windows-arm64.zip",
 	}
-	assertDirEntries(t, distDir, append(expectedArchives, "checksums.txt"))
+	assertDirEntries(t, distDir, append(expectedArchives, "checksums.txt", "install.sh", "install.ps1"))
 
 	for _, name := range expectedArchives {
 		assertArchiveContents(t, filepath.Join(distDir, name), strings.Contains(name, "windows"))
 	}
 	assertChecksums(t, distDir, expectedArchives)
+}
+
+func TestReadmeDocumentsInstallScripts(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+
+	for _, want := range []string{
+		"curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh",
+		"iwr https://github.com/r13v/llmgate/releases/download/main/install.ps1 -UseB | iex",
+		"LLMGATE_INSTALL_DIR",
+		"LLMGATE_OS",
+		"LLMGATE_ARCH",
+		"LLMGATE_ADD_TO_PATH=1",
+		"do not support SemVer version selection",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("README missing installer detail %q", want)
+		}
+	}
 }
 
 func readRepoFile(t *testing.T, path ...string) string {

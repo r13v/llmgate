@@ -77,19 +77,9 @@ jobs:
 
       - name: ShellCheck install.sh
         if: runner.os == 'Linux'
-        run: |
-          if [ -f scripts/install.sh ]; then
-            shellcheck scripts/install.sh
-          else
-            echo "scripts/install.sh is not present yet; skipping shellcheck."
-          fi
+        run: shellcheck scripts/install.sh
 
       - name: PowerShell install.ps1 smoke
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          if (Test-Path scripts/install.ps1) {
-            ./scripts/install.ps1 -DryRun
-          } else {
-            Write-Host "scripts/install.ps1 is not present yet; skipping PowerShell smoke."
-          }
+        run: ./scripts/install.ps1 -DryRun

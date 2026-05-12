@@ -180,15 +180,15 @@
 - Create: `internal/gateway/client_test.go`
 - Create: `internal/gateway/recommend_test.go`
 
-- [ ] Implement model list URL normalization, including `/v1/models`, base paths, `/v1` suffixes, query/hash removal, trailing slash handling, and `/models` fallback only on 404.
-- [ ] Implement model list requests with required headers and sorted unique model IDs.
-- [ ] Classify auth, HTTP, invalid JSON, empty models, network/timeout, and invalid URL failures.
-- [ ] Sanitize and truncate response details to 500 characters.
-- [ ] Implement chat completion model probe with `ping` and `max_tokens: 1`.
-- [ ] Implement success/failure cache keyed by normalized URL, token, and model, with bypass paths for retry/reselection.
-- [ ] Implement recommendation logic for primary, haiku, sonnet, and opus according to spec ordering.
-- [ ] Add httptest-based tests for all gateway acceptance scenarios and recommendation ordering.
-- [ ] Run focused gateway tests.
+- [x] Implement model list URL normalization, including `/v1/models`, base paths, `/v1` suffixes, query/hash removal, trailing slash handling, and `/models` fallback only on 404.
+- [x] Implement model list requests with required headers and sorted unique model IDs.
+- [x] Classify auth, HTTP, invalid JSON, empty models, network/timeout, and invalid URL failures.
+- [x] Sanitize and truncate response details to 500 characters.
+- [x] Implement chat completion model probe with `ping` and `max_tokens: 1`.
+- [x] Implement success/failure cache keyed by normalized URL, token, and model, with bypass paths for retry/reselection.
+- [x] Implement recommendation logic for primary, haiku, sonnet, and opus according to spec ordering.
+- [x] Add httptest-based tests for all gateway acceptance scenarios and recommendation ordering.
+- [x] Run focused gateway tests.
 
 ### Task 7: Config Collection and Resolution
 **Files:**

@@ -10,11 +10,14 @@ COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X github.com/r13v/llmgate/internal/version.version=$(VERSION) -X github.com/r13v/llmgate/internal/version.commit=$(COMMIT) -X github.com/r13v/llmgate/internal/version.date=$(DATE)
 
-.PHONY: build test test-e2e lint fmt check clean tools
+.PHONY: build package test test-e2e lint fmt check clean tools
 
 build:
 	mkdir -p bin
 	$(GO) build -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/llmgate
+
+package:
+	GO=$(GO) VERSION=main COMMIT=$(COMMIT) DATE=$(DATE) scripts/package.sh
 
 test:
 	$(GO) test ./...

@@ -35,7 +35,6 @@ const (
 
 type Source struct {
 	Label         core.SourceLabel
-	Exists        bool
 	Values        map[string]core.ConfigValue
 	SelectedModel *core.ConfigValue
 	ShellIssues   []shell.Issue
@@ -74,10 +73,9 @@ type SideContextDifference struct {
 	ComparedAgainst string
 }
 
-func source(label core.SourceLabel, exists bool, values map[string]string) Source {
+func source(label core.SourceLabel, values map[string]string) Source {
 	return Source{
 		Label:  label,
-		Exists: exists,
 		Values: configValues(label, values),
 	}
 }

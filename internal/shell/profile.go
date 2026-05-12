@@ -96,16 +96,6 @@ func ParseProfile(data []byte, syntax Syntax) (Profile, error) {
 	return profile, nil
 }
 
-func ParsePOSIX(data []byte) Profile {
-	profile, _ := ParseProfile(data, SyntaxPOSIX)
-	return profile
-}
-
-func ParseFish(data []byte) Profile {
-	profile, _ := ParseProfile(data, SyntaxFish)
-	return profile
-}
-
 func (p *Profile) finish() {
 	simpleByName := make(map[string][]Assignment)
 	lastByName := make(map[string]Assignment)

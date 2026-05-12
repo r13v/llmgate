@@ -52,18 +52,11 @@ func (RealFileSystem) Chmod(name string, mode fs.FileMode) error {
 }
 
 type ProcessEnvironment interface {
-	Environ() []string
 	LookupEnv(name string) (string, bool)
 	Getenv(name string) string
-	Setenv(name, value string) error
-	Unsetenv(name string) error
 }
 
 type RealEnvironment struct{}
-
-func (RealEnvironment) Environ() []string {
-	return os.Environ()
-}
 
 func (RealEnvironment) LookupEnv(name string) (string, bool) {
 	return os.LookupEnv(name)
@@ -71,14 +64,6 @@ func (RealEnvironment) LookupEnv(name string) (string, bool) {
 
 func (RealEnvironment) Getenv(name string) string {
 	return os.Getenv(name)
-}
-
-func (RealEnvironment) Setenv(name, value string) error {
-	return os.Setenv(name, value)
-}
-
-func (RealEnvironment) Unsetenv(name string) error {
-	return os.Unsetenv(name)
 }
 
 type Platform interface {
@@ -102,27 +87,17 @@ func (RealPlatform) WorkingDir() (string, error) {
 }
 
 type WindowsUserEnvironment interface {
-	Lookup(name string) (string, bool, error)
 	Snapshot(names []string) (map[string]string, error)
 	Set(name, value string) error
-	Delete(name string) error
 }
 
 type unsupportedWindowsUserEnvironment struct{}
-
-func (unsupportedWindowsUserEnvironment) Lookup(string) (string, bool, error) {
-	return "", false, ErrUnsupportedWindowsUserEnvironment
-}
 
 func (unsupportedWindowsUserEnvironment) Snapshot([]string) (map[string]string, error) {
 	return nil, ErrUnsupportedWindowsUserEnvironment
 }
 
 func (unsupportedWindowsUserEnvironment) Set(string, string) error {
-	return ErrUnsupportedWindowsUserEnvironment
-}
-
-func (unsupportedWindowsUserEnvironment) Delete(string) error {
 	return ErrUnsupportedWindowsUserEnvironment
 }
 

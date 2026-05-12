@@ -86,6 +86,7 @@ func normalizeBaseURL(raw string) (*url.URL, string, bool, error) {
 	parsed.RawFragment = ""
 	parsed.RawPath = ""
 	basePath := cleanURLPath(parsed.Path)
+	basePath = stripKnownEndpointSuffix(basePath)
 	parsed.Path = basePath
 
 	return parsed, basePath, pathEndsWithV1(basePath), nil
@@ -115,6 +116,51 @@ func pathEndsWithV1(value string) bool {
 	}
 	parts := strings.Split(value, "/")
 	return strings.EqualFold(parts[len(parts)-1], "v1")
+}
+
+func stripKnownEndpointSuffix(value string) string {
+	switch {
+	case pathHasSuffix(value, "v1", "models"):
+		return trimPathSuffix(value, 1)
+	case pathHasSuffix(value, "models"):
+		return trimPathSuffix(value, 1)
+	case pathHasSuffix(value, "v1", "chat", "completions"):
+		return trimPathSuffix(value, 2)
+	case pathHasSuffix(value, "chat", "completions"):
+		return trimPathSuffix(value, 2)
+	default:
+		return value
+	}
+}
+
+func pathHasSuffix(value string, suffix ...string) bool {
+	parts := pathParts(value)
+	if len(parts) < len(suffix) {
+		return false
+	}
+	offset := len(parts) - len(suffix)
+	for i, want := range suffix {
+		if !strings.EqualFold(parts[offset+i], want) {
+			return false
+		}
+	}
+	return true
+}
+
+func trimPathSuffix(value string, count int) string {
+	parts := pathParts(value)
+	if count >= len(parts) {
+		return ""
+	}
+	return "/" + strings.Join(parts[:len(parts)-count], "/")
+}
+
+func pathParts(value string) []string {
+	value = strings.Trim(value, "/")
+	if value == "" {
+		return nil
+	}
+	return strings.Split(value, "/")
 }
 
 func trimV1Suffix(value string) string {

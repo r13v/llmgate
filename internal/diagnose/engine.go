@@ -172,15 +172,13 @@ func evaluateContext(ctx context.Context, name string, resolved core.ResolvedCon
 		evaluation.models[i].available = true
 	}
 
-	if allModelsAvailable {
-		for _, model := range uniqueAvailableModels(evaluation.models) {
-			result, probeErr := opts.Gateway.ProbeModel(ctx, evaluation.baseURL, evaluation.token, model, gateway.RequestOptions{})
-			evaluation.probes = append(evaluation.probes, probeEvaluation{
-				model:  model,
-				result: result,
-				err:    probeErr,
-			})
-		}
+	for _, model := range uniqueAvailableModels(evaluation.models) {
+		result, probeErr := opts.Gateway.ProbeModel(ctx, evaluation.baseURL, evaluation.token, model, gateway.RequestOptions{})
+		evaluation.probes = append(evaluation.probes, probeEvaluation{
+			model:  model,
+			result: result,
+			err:    probeErr,
+		})
 	}
 
 	evaluation.usable = allModelsAvailable && probesSucceeded(evaluation.probes)

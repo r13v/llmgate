@@ -93,3 +93,30 @@ func TestRunUnexpectedArgument(t *testing.T) {
 		t.Fatalf("unexpected argument stderr missing error: %q", stderr.String())
 	}
 }
+
+func TestRunArgumentErrorsRedactTokenLikeSecrets(t *testing.T) {
+	for _, args := range [][]string{
+		{"sk-test-token-1234567890"},
+		{"--version=sk-test-token-1234567890"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+
+			code := run(args, &stdout, &stderr)
+
+			if code != 2 {
+				t.Fatalf("run returned %d, want 2", code)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("argument error wrote stdout: %q", stdout.String())
+			}
+			if strings.Contains(stderr.String(), "sk-test-token-1234567890") {
+				t.Fatalf("argument error leaked token: %q", stderr.String())
+			}
+			if !strings.Contains(stderr.String(), "sk-...7890") {
+				t.Fatalf("argument error missing masked token: %q", stderr.String())
+			}
+		})
+	}
+}

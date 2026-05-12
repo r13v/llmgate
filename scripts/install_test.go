@@ -206,6 +206,41 @@ func TestInstallPS1InstallsVerifiedLocalRelease(t *testing.T) {
 	}
 }
 
+func TestInstallPS1RejectsChecksumMismatch(t *testing.T) {
+	ps, args := powershellCommand(t)
+
+	archiveName := "llmgate-main-windows-amd64.zip"
+	archiveData := zipWithFile(t, "llmgate.exe", []byte("fake llmgate.exe\n"))
+	server := fakeReleaseServer(t, map[string][]byte{
+		archiveName: archiveData,
+		"checksums.txt": []byte(
+			"0000000000000000000000000000000000000000000000000000000000000000  " + archiveName + "\n",
+		),
+	})
+
+	localAppData := filepath.Join(t.TempDir(), "LocalAppData")
+	args = append(args, "scripts/install.ps1")
+	cmd := exec.Command(ps, args...)
+	cmd.Dir = repoRoot(t)
+	cmd.Env = testEnv(map[string]string{
+		"LLMGATE_RELEASE_URL": server.URL,
+		"LLMGATE_OS":          "windows",
+		"LLMGATE_ARCH":        "amd64",
+		"LOCALAPPDATA":        localAppData,
+	})
+
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("install.ps1 succeeded with a bad checksum:\n%s", output)
+	}
+	if !strings.Contains(string(output), "checksum mismatch") {
+		t.Fatalf("install.ps1 mismatch output missing checksum error:\n%s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(localAppData, "Programs", "llmgate", "bin", "llmgate.exe")); !os.IsNotExist(statErr) {
+		t.Fatalf("install.ps1 wrote binary despite checksum mismatch: %v", statErr)
+	}
+}
+
 func powershellCommand(t *testing.T) (string, []string) {
 	t.Helper()
 

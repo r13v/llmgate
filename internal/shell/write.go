@@ -22,12 +22,16 @@ func UpsertProfile(data []byte, syntax Syntax, values map[string]string, mode Wr
 	lines := splitLines(string(data))
 	assignmentsByLine := make(map[int][]Assignment)
 	updatedNames := make(map[string]bool)
+	lastAssignments := make(map[string]Assignment)
 	skipped := make([]Issue, 0)
 
 	for i, line := range lines {
 		assignments := parser(line.Text, i+1)
 		assignmentsByLine[i] = assignments
 		for _, assignment := range assignments {
+			if _, ok := values[assignment.Name]; ok {
+				lastAssignments[assignment.Name] = assignment
+			}
 			if assignment.Kind == AssignmentSimple {
 				continue
 			}
@@ -67,7 +71,7 @@ func UpsertProfile(data []byte, syntax Syntax, values map[string]string, mode Wr
 	}
 
 	if mode == ModeSetup {
-		appendMissing(&lines, syntax, values, updatedNames)
+		appendMissing(&lines, syntax, values, effectiveUpdatedNames(updatedNames, lastAssignments))
 	}
 
 	output := renderLines(lines)
@@ -83,14 +87,6 @@ func UpsertProfile(data []byte, syntax Syntax, values map[string]string, mode Wr
 	return output, result, nil
 }
 
-func UpsertPOSIX(data []byte, values map[string]string, mode WriteMode) ([]byte, WriteResult, error) {
-	return UpsertProfile(data, SyntaxPOSIX, values, mode)
-}
-
-func UpsertFish(data []byte, values map[string]string, mode WriteMode) ([]byte, WriteResult, error) {
-	return UpsertProfile(data, SyntaxFish, values, mode)
-}
-
 func appendMissing(lines *[]parsedLine, syntax Syntax, values map[string]string, updatedNames map[string]bool) {
 	for _, name := range orderedManagedNames(values) {
 		if updatedNames[name] {
@@ -101,6 +97,18 @@ func appendMissing(lines *[]parsedLine, syntax Syntax, values map[string]string,
 			EOL:  "\n",
 		})
 	}
+}
+
+func effectiveUpdatedNames(updatedNames map[string]bool, lastAssignments map[string]Assignment) map[string]bool {
+	effective := make(map[string]bool, len(updatedNames))
+	for name := range updatedNames {
+		last, ok := lastAssignments[name]
+		if ok && last.Kind != AssignmentSimple {
+			continue
+		}
+		effective[name] = true
+	}
+	return effective
 }
 
 func formatAssignment(syntax Syntax, name, value string) string {

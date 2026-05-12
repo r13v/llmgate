@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/r13v/llmgate/internal/redact"
 	"github.com/r13v/llmgate/internal/system"
 	"github.com/r13v/llmgate/internal/version"
 	"github.com/r13v/llmgate/internal/wizard"
@@ -27,17 +28,19 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	flags := flag.NewFlagSet("llmgate", flag.ContinueOnError)
-	flags.SetOutput(stderr)
+	flags.SetOutput(io.Discard)
 
 	showHelp := flags.Bool("help", false, "show help")
 	showVersion := flags.Bool("version", false, "show version")
 
 	if err := flags.Parse(args); err != nil {
+		_, _ = fmt.Fprintf(stderr, "llmgate: %s\n\n", sanitizeCLIError(err.Error()))
+		_, _ = fmt.Fprint(stderr, usage)
 		return 2
 	}
 
 	if flags.NArg() > 0 {
-		_, _ = fmt.Fprintf(stderr, "llmgate: unexpected argument %q\n\n", flags.Arg(0))
+		_, _ = fmt.Fprintf(stderr, "llmgate: unexpected argument %q\n\n", sanitizeCLIError(flags.Arg(0)))
 		_, _ = fmt.Fprint(stderr, usage)
 		return 2
 	}
@@ -51,11 +54,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 0
 	default:
 		if err := runWizard(stdout); err != nil {
-			_, _ = fmt.Fprintf(stderr, "llmgate: %v\n", err)
+			_, _ = fmt.Fprintf(stderr, "llmgate: %s\n", sanitizeCLIError(err.Error()))
 			return 1
 		}
 		return 0
 	}
+}
+
+func sanitizeCLIError(value string) string {
+	return redact.Text(value, redact.Options{})
 }
 
 func runWizard(stdout io.Writer) error {

@@ -45,6 +45,18 @@ func TestNormalizeModelURLs(t *testing.T) {
 			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
 			wantFallback: "https://gateway.example.com/litellm/models",
 		},
+		{
+			name:         "v1 models endpoint",
+			baseURL:      "https://gateway.example.com/litellm/v1/models?token=leak#fragment",
+			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
+			wantFallback: "https://gateway.example.com/litellm/models",
+		},
+		{
+			name:         "models endpoint fallback form",
+			baseURL:      "https://gateway.example.com/litellm/models",
+			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
+			wantFallback: "https://gateway.example.com/litellm/models",
+		},
 	}
 
 	for _, tt := range tests {
@@ -82,6 +94,16 @@ func TestNormalizeCompletionsURL(t *testing.T) {
 		{
 			name:    "prefix",
 			baseURL: "https://gateway.example.com/proxy/?q=1#frag",
+			want:    "https://gateway.example.com/proxy/v1/chat/completions",
+		},
+		{
+			name:    "v1 models endpoint",
+			baseURL: "https://gateway.example.com/proxy/v1/models",
+			want:    "https://gateway.example.com/proxy/v1/chat/completions",
+		},
+		{
+			name:    "chat completions endpoint",
+			baseURL: "https://gateway.example.com/proxy/v1/chat/completions",
 			want:    "https://gateway.example.com/proxy/v1/chat/completions",
 		},
 	}
@@ -271,6 +293,20 @@ func TestSanitizedDetailsAreTruncated(t *testing.T) {
 	}
 	if strings.Contains(gatewayErr.Detail, token) {
 		t.Fatalf("detail leaked token: %q", gatewayErr.Detail)
+	}
+}
+
+func TestResponseBodySizeLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = fmt.Fprint(w, strings.Repeat("x", maxResponseBodyBytes+1))
+	}))
+	defer server.Close()
+
+	_, err := Client{}.ListModels(context.Background(), server.URL, "token", RequestOptions{})
+	gatewayErr := assertFailure(t, err, FailureHTTP)
+	if !strings.Contains(gatewayErr.Detail, "exceeded") {
+		t.Fatalf("Detail = %q, want body limit error", gatewayErr.Detail)
 	}
 }
 

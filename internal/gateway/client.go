@@ -13,6 +13,9 @@ import (
 )
 
 const defaultTimeout = 10 * time.Second
+const maxResponseBodyBytes = 1 << 20
+
+var errResponseBodyTooLarge = errors.New("gateway response body exceeded 1048576 bytes")
 
 type FailureKind string
 
@@ -32,7 +35,6 @@ type Client struct {
 }
 
 type RequestOptions struct {
-	BypassCache       bool
 	BypassFailedCache bool
 }
 
@@ -132,13 +134,11 @@ func (c Client) ListModels(ctx context.Context, baseURL, token string, opts Requ
 	}
 
 	cacheKey := cacheKey(modelURLs.Primary, modelURLs.Fallback, token)
-	if !opts.BypassCache {
-		if result, cachedErr, ok := c.Cache.getModelList(cacheKey, opts.BypassFailedCache); ok {
-			if cachedErr != nil {
-				return ModelListResult{}, cachedErr
-			}
-			return result, nil
+	if result, cachedErr, ok := c.Cache.getModelList(cacheKey, opts.BypassFailedCache); ok {
+		if cachedErr != nil {
+			return ModelListResult{}, cachedErr
 		}
+		return result, nil
 	}
 
 	result, requestErr := c.listModelsUncached(ctx, modelURLs, token)
@@ -162,13 +162,11 @@ func (c Client) ProbeModel(ctx context.Context, baseURL, token, model string, op
 	}
 
 	cacheKey := cacheKey(completionsURL, token, model)
-	if !opts.BypassCache {
-		if result, cachedErr, ok := c.Cache.getProbe(cacheKey, opts.BypassFailedCache); ok {
-			if cachedErr != nil {
-				return ProbeResult{}, cachedErr
-			}
-			return result, nil
+	if result, cachedErr, ok := c.Cache.getProbe(cacheKey, opts.BypassFailedCache); ok {
+		if cachedErr != nil {
+			return ProbeResult{}, cachedErr
 		}
+		return result, nil
 	}
 
 	result, probeErr := c.probeModelUncached(ctx, completionsURL, token, model)
@@ -183,12 +181,12 @@ func (c Client) ProbeModel(ctx context.Context, baseURL, token, model string, op
 func (c Client) listModelsUncached(ctx context.Context, modelURLs ModelURLs, token string) (ModelListResult, *Error) {
 	status, body, err := c.doJSON(ctx, http.MethodGet, modelURLs.Primary, token, nil)
 	if err != nil {
-		return ModelListResult{}, networkError("model list", modelURLs.Primary, token, err)
+		return ModelListResult{}, requestError("model list", modelURLs.Primary, token, err)
 	}
 	if status == http.StatusNotFound {
 		fallbackStatus, fallbackBody, fallbackErr := c.doJSON(ctx, http.MethodGet, modelURLs.Fallback, token, nil)
 		if fallbackErr != nil {
-			return ModelListResult{}, networkError("model list", modelURLs.Fallback, token, fallbackErr)
+			return ModelListResult{}, requestError("model list", modelURLs.Fallback, token, fallbackErr)
 		}
 		result, modelErr := handleModelListResponse(fallbackStatus, fallbackBody, token, modelURLs.Fallback, true)
 		result.FallbackURL = modelURLs.Fallback
@@ -212,7 +210,7 @@ func (c Client) probeModelUncached(ctx context.Context, completionsURL, token, m
 
 	status, responseBody, err := c.doJSON(ctx, http.MethodPost, completionsURL, token, body)
 	if err != nil {
-		return ProbeResult{}, networkError("model probe", completionsURL, token, err)
+		return ProbeResult{}, requestError("model probe", completionsURL, token, err)
 	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return ProbeResult{}, &Error{
@@ -267,9 +265,12 @@ func (c Client) doJSON(ctx context.Context, method, requestURL, token string, bo
 		_ = response.Body.Close()
 	}()
 
-	data, err := io.ReadAll(response.Body)
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBodyBytes+1))
 	if err != nil {
 		return response.StatusCode, nil, err
+	}
+	if int64(len(data)) > maxResponseBodyBytes {
+		return response.StatusCode, nil, errResponseBodyTooLarge
 	}
 	return response.StatusCode, data, nil
 }
@@ -337,6 +338,19 @@ func handleModelListResponse(status int, body []byte, token, requestURL string, 
 		result.Summary += " via /models fallback"
 	}
 	return result, nil
+}
+
+func requestError(operation, requestURL, token string, err error) *Error {
+	if errors.Is(err, errResponseBodyTooLarge) {
+		return &Error{
+			Kind:      FailureHTTP,
+			Operation: operation,
+			URL:       requestURL,
+			Detail:    sanitizedResponseDetail([]byte(err.Error()), token),
+			Err:       err,
+		}
+	}
+	return networkError(operation, requestURL, token, err)
 }
 
 func networkError(operation, requestURL, token string, err error) *Error {

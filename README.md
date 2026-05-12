@@ -37,6 +37,17 @@ make check
 `make lint` installs the pinned `golangci-lint v2.12.2` binary under
 `.tools/bin`.
 
+## CI
+
+GitHub Actions runs the project on Linux, macOS, and Windows with Go `1.26.3`.
+The workflow runs `make fmt`, verifies the formatted diff is clean, runs
+`make lint`, `make test`, and `make test-e2e`, and also uses
+`golangci/golangci-lint-action@v9` with pinned `golangci-lint v2.12.2`.
+
+Installer checks are wired to activate when the release install scripts exist:
+Linux runs `shellcheck scripts/install.sh`, and Windows runs a PowerShell
+`scripts/install.ps1 -DryRun` smoke check.
+
 ## Development
 
 The project uses Go `1.26.3`.

@@ -1,0 +1,213 @@
+package shell
+
+import (
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/r13v/llmgate/internal/core"
+)
+
+func TestParsePOSIXProfilesReadSimpleAssignmentsAndIgnoreComments(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"# export ANTHROPIC_AUTH_TOKEN='sk-commented123456'",
+		"export ANTHROPIC_AUTH_TOKEN='sk-active123456'",
+		"ANTHROPIC_BASE_URL=https://gateway.example.com # keep this",
+		"export PATH='/usr/bin'",
+		"",
+	}, "\n"))
+
+	for _, name := range []string{"zsh", "bash"} {
+		t.Run(name, func(t *testing.T) {
+			profile := ParsePOSIX(input)
+			assertProfileValue(t, profile, core.VarAnthropicAuthToken, "sk-active123456", 2)
+			assertProfileValue(t, profile, core.VarAnthropicBaseURL, "https://gateway.example.com", 3)
+			if _, ok := profile.Values["PATH"]; ok {
+				t.Fatalf("unmanaged PATH should not be read")
+			}
+			if len(profile.Issues) != 0 {
+				t.Fatalf("Issues = %#v, want none", profile.Issues)
+			}
+		})
+	}
+}
+
+func TestParseDetectsDuplicateDynamicAndComplexPOSIXAssignments(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"export ANTHROPIC_MODEL='claude-old'",
+		"ANTHROPIC_MODEL=claude-new",
+		"export ANTHROPIC_DEFAULT_HAIKU_MODEL=$(pick-haiku)",
+		"declare -x ANTHROPIC_DEFAULT_SONNET_MODEL='claude-sonnet'",
+		"export ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"export ANTHROPIC_BASE_URL=https://one.example.com ANTHROPIC_AUTH_TOKEN=sk-token123456",
+		"",
+	}, "\n"))
+
+	profile := ParsePOSIX(input)
+	assertProfileValue(t, profile, core.VarAnthropicModel, "claude-new", 2)
+	assertIssue(t, profile.Duplicates, IssueDuplicate, core.VarAnthropicModel, 0)
+	assertIssue(t, profile.Manual, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 3)
+	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicDefaultSonnetModel, 4)
+	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicDefaultOpusModel, 5)
+	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicBaseURL, 6)
+	assertIssue(t, profile.Manual, IssueComplex, core.VarAnthropicAuthToken, 6)
+}
+
+func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"# shell setup",
+		"# export ANTHROPIC_AUTH_TOKEN='sk-commented123456'",
+		"export ANTHROPIC_AUTH_TOKEN='sk-oldtoken123456' # token comment",
+		"ANTHROPIC_BASE_URL=https://old.example.com",
+		"export ANTHROPIC_MODEL=$(choose-model)",
+		"export PATH='/usr/bin'",
+		"",
+	}, "\n"))
+	values := map[string]string{
+		core.VarAnthropicAuthToken: "sk-new'token\\123456",
+		core.VarAnthropicBaseURL:   "https://gateway.example.com/v1#fragment",
+		core.VarAnthropicModel:     "claude-primary",
+	}
+
+	output, result, err := UpsertPOSIX(input, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertPOSIX() error = %v", err)
+	}
+	text := string(output)
+	assertContains(t, text, "# shell setup")
+	assertContains(t, text, "# export ANTHROPIC_AUTH_TOKEN='sk-commented123456'")
+	assertContains(t, text, "export ANTHROPIC_AUTH_TOKEN='sk-new'\\''token\\123456' # token comment")
+	assertContains(t, text, "export ANTHROPIC_BASE_URL='https://gateway.example.com/v1#fragment'")
+	assertContains(t, text, "export ANTHROPIC_MODEL=$(choose-model)")
+	assertContains(t, text, "export PATH='/usr/bin'")
+	assertContains(t, text, "export ANTHROPIC_MODEL='claude-primary'")
+	if !result.Changed {
+		t.Fatalf("Changed = false, want true")
+	}
+	assertIssue(t, result.Skipped, IssueDynamic, core.VarAnthropicModel, 5)
+	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-primary", 7)
+
+	second, _, err := UpsertPOSIX(output, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("second UpsertPOSIX() error = %v", err)
+	}
+	if string(second) != text {
+		t.Fatalf("UpsertPOSIX() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
+	}
+}
+
+func TestUpsertRepairModeUpdatesOnlyExistingSimpleAssignments(t *testing.T) {
+	input := []byte("export ANTHROPIC_MODEL='claude-old'\n")
+	values := map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+		core.VarAnthropicModel:   "claude-new",
+	}
+
+	output, result, err := UpsertPOSIX(input, values, ModeRepair)
+	if err != nil {
+		t.Fatalf("UpsertPOSIX repair error = %v", err)
+	}
+	text := string(output)
+	assertContains(t, text, "export ANTHROPIC_MODEL='claude-new'")
+	assertNotContains(t, text, core.VarAnthropicBaseURL)
+	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-new", 1)
+}
+
+func TestParseAndUpsertFishProfile(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"# set -x ANTHROPIC_AUTH_TOKEN 'sk-commented123456'",
+		"set -x ANTHROPIC_AUTH_TOKEN 'sk-oldtoken123456'",
+		"set -gx ANTHROPIC_BASE_URL 'https://old.example.com' # base comment",
+		"set -x ANTHROPIC_DEFAULT_HAIKU_MODEL (choose-haiku)",
+		"set -x PATH /usr/bin",
+		"",
+	}, "\n"))
+
+	profile := ParseFish(input)
+	assertProfileValue(t, profile, core.VarAnthropicAuthToken, "sk-oldtoken123456", 2)
+	assertProfileValue(t, profile, core.VarAnthropicBaseURL, "https://old.example.com", 3)
+	assertIssue(t, profile.Manual, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 4)
+
+	values := map[string]string{
+		core.VarAnthropicAuthToken:         "sk-new'token\\123456",
+		core.VarAnthropicBaseURL:           "https://gateway.example.com",
+		core.VarAnthropicDefaultHaikuModel: "claude-haiku",
+	}
+	output, result, err := UpsertFish(input, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertFish() error = %v", err)
+	}
+	text := string(output)
+	assertContains(t, text, "set -x ANTHROPIC_AUTH_TOKEN 'sk-new\\'token\\\\123456'")
+	assertContains(t, text, "set -x ANTHROPIC_BASE_URL 'https://gateway.example.com' # base comment")
+	assertContains(t, text, "set -x ANTHROPIC_DEFAULT_HAIKU_MODEL (choose-haiku)")
+	assertContains(t, text, "set -x ANTHROPIC_DEFAULT_HAIKU_MODEL 'claude-haiku'")
+	assertIssue(t, result.Skipped, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 4)
+
+	second, _, err := UpsertFish(output, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("second UpsertFish() error = %v", err)
+	}
+	if string(second) != text {
+		t.Fatalf("UpsertFish() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
+	}
+}
+
+func TestLegacyManagedBlocksAreNotSpecial(t *testing.T) {
+	input, err := os.ReadFile("testdata/legacy_block.sh")
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	values := map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	}
+
+	output, result, err := UpsertPOSIX(input, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertPOSIX() error = %v", err)
+	}
+	text := string(output)
+	assertContains(t, text, "# BEGIN LLMGATE")
+	assertContains(t, text, "# export ANTHROPIC_BASE_URL='https://old.example.com'")
+	assertContains(t, text, "# END LLMGATE")
+	assertContains(t, text, "export ANTHROPIC_BASE_URL='https://gateway.example.com'")
+	assertProfileValue(t, result.Profile, core.VarAnthropicBaseURL, "https://gateway.example.com", 4)
+	if len(result.Profile.Issues) != 0 {
+		t.Fatalf("Issues = %#v, want none", result.Profile.Issues)
+	}
+}
+
+func assertProfileValue(t *testing.T, profile Profile, name, value string, line int) {
+	t.Helper()
+	got, ok := profile.Values[name]
+	if !ok {
+		t.Fatalf("Values[%s] missing", name)
+	}
+	if got.Value != value || got.Line != line {
+		t.Fatalf("Values[%s] = {%q line %d}, want {%q line %d}", name, got.Value, got.Line, value, line)
+	}
+}
+
+func assertIssue(t *testing.T, issues []Issue, kind IssueKind, name string, line int) {
+	t.Helper()
+	for _, issue := range issues {
+		if issue.Kind == kind && issue.Name == name && (line == 0 || issue.Line == line) {
+			return
+		}
+	}
+	t.Fatalf("issue %s for %s line %d not found in %#v", kind, name, line, issues)
+}
+
+func assertContains(t *testing.T, text, want string) {
+	t.Helper()
+	if !strings.Contains(text, want) {
+		t.Fatalf("output missing %q:\n%s", want, text)
+	}
+}
+
+func assertNotContains(t *testing.T, text, notWant string) {
+	t.Helper()
+	if strings.Contains(text, notWant) {
+		t.Fatalf("output unexpectedly contains %q:\n%s", notWant, text)
+	}
+}

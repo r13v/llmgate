@@ -82,6 +82,17 @@ func firstObjectMember(obj *hujson.Object, name string) *hujson.ObjectMember {
 	return matches[0]
 }
 
+func singleObjectMember(obj *hujson.Object, name, label string) (*hujson.ObjectMember, error) {
+	matches := findObjectMembers(obj, name)
+	if len(matches) == 0 {
+		return nil, nil
+	}
+	if len(matches) > 1 {
+		return nil, malformed(label, fmt.Sprintf("%q appears multiple times", name))
+	}
+	return matches[0], nil
+}
+
 func upsertObjectString(obj *hujson.Object, name, value string) bool {
 	matches := findObjectMembers(obj, name)
 	if len(matches) == 0 {

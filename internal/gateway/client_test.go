@@ -18,42 +18,49 @@ func TestNormalizeModelURLs(t *testing.T) {
 	tests := []struct {
 		name         string
 		baseURL      string
+		wantBase     string
 		wantPrimary  string
 		wantFallback string
 	}{
 		{
 			name:         "root",
 			baseURL:      "https://gateway.example.com",
+			wantBase:     "https://gateway.example.com",
 			wantPrimary:  "https://gateway.example.com/v1/models",
 			wantFallback: "https://gateway.example.com/models",
 		},
 		{
 			name:         "v1 suffix",
 			baseURL:      "https://gateway.example.com/v1",
+			wantBase:     "https://gateway.example.com/v1",
 			wantPrimary:  "https://gateway.example.com/v1/models",
 			wantFallback: "https://gateway.example.com/models",
 		},
 		{
 			name:         "path prefix",
 			baseURL:      "https://gateway.example.com/litellm",
+			wantBase:     "https://gateway.example.com/litellm",
 			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
 			wantFallback: "https://gateway.example.com/litellm/models",
 		},
 		{
 			name:         "path prefix with v1 and query hash trailing slash",
 			baseURL:      "https://gateway.example.com/litellm/v1/?token=leak#fragment",
+			wantBase:     "https://gateway.example.com/litellm/v1",
 			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
 			wantFallback: "https://gateway.example.com/litellm/models",
 		},
 		{
 			name:         "v1 models endpoint",
-			baseURL:      "https://gateway.example.com/litellm/v1/models?token=leak#fragment",
+			baseURL:      "https://sk-secret123456@gateway.example.com/litellm/v1/models?token=leak#fragment",
+			wantBase:     "https://gateway.example.com/litellm/v1",
 			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
 			wantFallback: "https://gateway.example.com/litellm/models",
 		},
 		{
 			name:         "models endpoint fallback form",
 			baseURL:      "https://gateway.example.com/litellm/models",
+			wantBase:     "https://gateway.example.com/litellm",
 			wantPrimary:  "https://gateway.example.com/litellm/v1/models",
 			wantFallback: "https://gateway.example.com/litellm/models",
 		},
@@ -64,6 +71,9 @@ func TestNormalizeModelURLs(t *testing.T) {
 			got, err := NormalizeModelURLs(tt.baseURL)
 			if err != nil {
 				t.Fatalf("NormalizeModelURLs() error = %v", err)
+			}
+			if got.Base != tt.wantBase {
+				t.Fatalf("Base = %q, want %q", got.Base, tt.wantBase)
 			}
 			if got.Primary != tt.wantPrimary {
 				t.Fatalf("Primary = %q, want %q", got.Primary, tt.wantPrimary)

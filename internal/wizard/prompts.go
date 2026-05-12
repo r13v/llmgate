@@ -87,7 +87,7 @@ func promptCredentials(ctx context.Context, prompts Prompter, defaults credentia
 	if defaults.TokenFound {
 		description := "Existing gateway token found in " + sourceLabel(defaults.TokenSource, display) + "."
 		if defaults.BaseURL != "" {
-			description += "\nBase URL default: " + defaults.BaseURL
+			description += "\nBase URL default: " + displayBaseURLDefault(defaults.BaseURL, []string{token}, display)
 			if defaults.BaseSource.Kind != core.SourceUnknown {
 				description += " from " + sourceLabel(defaults.BaseSource, display)
 			}
@@ -121,6 +121,9 @@ func promptCredentials(ctx context.Context, prompts Prompter, defaults credentia
 	}
 
 	baseURLDefault := defaults.BaseURL
+	if baseURLDefault != "" {
+		baseURLDefault = safeBaseURLDefault(baseURLDefault, []string{token}, display)
+	}
 	if baseURLDefault == "" {
 		baseURLDefault = core.DefaultBaseURLPlaceholder
 	}
@@ -134,6 +137,25 @@ func promptCredentials(ctx context.Context, prompts Prompter, defaults credentia
 		return "", "", err
 	}
 	return token, baseURL, nil
+}
+
+func displayBaseURLDefault(raw string, knownSecrets []string, display displayOptions) string {
+	if canonical, err := gateway.NormalizeBaseURL(raw); err == nil {
+		return sanitizeText(canonical, knownSecrets, display)
+	}
+	return sanitizeText(raw, knownSecrets, display)
+}
+
+func safeBaseURLDefault(raw string, knownSecrets []string, display displayOptions) string {
+	canonical, err := gateway.NormalizeBaseURL(raw)
+	if err != nil {
+		return ""
+	}
+	sanitized := sanitizeText(canonical, knownSecrets, display)
+	if sanitized != canonical {
+		return ""
+	}
+	return sanitized
 }
 
 func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, token string, display displayOptions) (gatewayRecovery, error) {

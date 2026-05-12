@@ -93,6 +93,63 @@ func TestParseRejectsMalformedJSONCAndNonObjectRoot(t *testing.T) {
 	}
 }
 
+func TestRejectsDuplicateTopLevelManagedSettingsKeys(t *testing.T) {
+	tests := []struct {
+		name  string
+		parse func([]byte) error
+		input string
+	}{
+		{
+			name: "claude duplicate env",
+			parse: func(data []byte) error {
+				_, err := ParseClaude(data)
+				return err
+			},
+			input: `{"env":{},"env":{"ANTHROPIC_BASE_URL":"https://stale.example.com"}}`,
+		},
+		{
+			name: "ide duplicate environment variables",
+			parse: func(data []byte) error {
+				_, err := ParseIDE(data)
+				return err
+			},
+			input: `{"claudeCode.environmentVariables":[],"claudeCode.environmentVariables":[{"name":"ANTHROPIC_BASE_URL","value":"https://stale.example.com"}]}`,
+		},
+		{
+			name: "ide duplicate selected model",
+			parse: func(data []byte) error {
+				_, err := ParseIDE(data)
+				return err
+			},
+			input: `{"claudeCode.selectedModel":"claude-old","claudeCode.selectedModel":"claude-new"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.parse([]byte(tt.input)); err == nil {
+				t.Fatalf("parse error = nil, want duplicate-key error")
+			}
+		})
+	}
+
+	if _, err := UpsertClaude([]byte(tests[0].input), map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	}); err == nil {
+		t.Fatalf("UpsertClaude() error = nil, want duplicate env error")
+	}
+	if _, err := UpsertIDE([]byte(tests[1].input), "claude-primary", map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	}); err == nil {
+		t.Fatalf("UpsertIDE() error = nil, want duplicate environmentVariables error")
+	}
+	if _, err := UpsertIDE([]byte(tests[2].input), "claude-primary", map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	}); err == nil {
+		t.Fatalf("UpsertIDE() error = nil, want duplicate selectedModel error")
+	}
+}
+
 func TestUpsertClaudePreservesUnrelatedSettingsCommentsAndIsIdempotent(t *testing.T) {
 	input := readFixture(t, "claude_comments.jsonc")
 	values := map[string]string{

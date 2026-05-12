@@ -199,6 +199,8 @@ gatewayLoop:
 			}
 		}
 		_, _ = fmt.Fprintf(r.out, "Gateway validation passed: %s\n", modelList.Summary)
+		baseURL = modelList.BaseURL
+		defaults.BaseURL = baseURL
 
 		modelDefaults := modelDefaultsFromResolution(result.Diagnostics.Resolution, token, baseURL)
 		for {

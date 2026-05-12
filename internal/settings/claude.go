@@ -18,7 +18,10 @@ func ParseClaude(data []byte) (Claude, error) {
 	}
 
 	env := make(map[string]string)
-	member := firstObjectMember(root, claudeEnvKey)
+	member, err := singleObjectMember(root, claudeEnvKey, "Claude")
+	if err != nil {
+		return Claude{}, err
+	}
 	if member == nil {
 		return Claude{Env: env}, nil
 	}
@@ -66,7 +69,10 @@ func UpsertClaude(data []byte, values map[string]string) ([]byte, error) {
 
 func ensureObjectMember(root *hujson.Object, name, label string) (*hujson.Object, bool, error) {
 	changed := false
-	member := firstObjectMember(root, name)
+	member, err := singleObjectMember(root, name, label)
+	if err != nil {
+		return nil, false, err
+	}
 	if member == nil {
 		member = upsertObjectValue(root, name, newObjectValue())
 		changed = true

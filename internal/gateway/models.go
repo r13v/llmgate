@@ -18,8 +18,17 @@ const maxDetailLength = 500
 var whitespacePattern = regexp.MustCompile(`\s+`)
 
 type ModelURLs struct {
+	Base     string
 	Primary  string
 	Fallback string
+}
+
+func NormalizeBaseURL(baseURL string) (string, error) {
+	base, _, _, err := normalizeBaseURL(baseURL)
+	if err != nil {
+		return "", err
+	}
+	return base.String(), nil
 }
 
 func NormalizeModelURLs(baseURL string) (ModelURLs, error) {
@@ -43,6 +52,7 @@ func NormalizeModelURLs(baseURL string) (ModelURLs, error) {
 	fallback.Path = joinURLPath(fallbackRoot, "models")
 
 	return ModelURLs{
+		Base:     base.String(),
 		Primary:  primary.String(),
 		Fallback: fallback.String(),
 	}, nil
@@ -85,6 +95,7 @@ func normalizeBaseURL(raw string) (*url.URL, string, bool, error) {
 	parsed.Fragment = ""
 	parsed.RawFragment = ""
 	parsed.RawPath = ""
+	parsed.User = nil
 	basePath := cleanURLPath(parsed.Path)
 	basePath = stripKnownEndpointSuffix(basePath)
 	parsed.Path = basePath

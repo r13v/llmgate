@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 
 	"github.com/r13v/llmgate/internal/redact"
 	"github.com/r13v/llmgate/internal/system"
@@ -62,7 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func sanitizeCLIError(value string) string {
-	return redact.Text(value, redact.Options{})
+	home, _ := os.UserHomeDir()
+	return redact.Text(value, redact.Options{HomeDir: home, GOOS: runtime.GOOS})
 }
 
 func runWizard(stdout io.Writer) error {

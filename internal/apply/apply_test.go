@@ -139,6 +139,69 @@ func TestUpdateExistingFileCreatesTimestampedBackupAtomicallyAndIdempotentRerunS
 	}
 }
 
+func TestApplyAbortsWhenExistingTargetChangedAfterPlanBuilt(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.claude/settings.json"
+	original := []byte(`{"env":{"ANTHROPIC_MODEL":"old-model"}}` + "\n")
+	externalChange := []byte(`{"env":{"ANTHROPIC_MODEL":"external-change"}}` + "\n")
+	fileSystem.addFile(path, original, 0o600)
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(true), []core.WriteTarget{
+		writeTarget(core.WriteTargetClaudeUserSettings, path, true),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	fileSystem.addFile(path, externalChange, 0o600)
+
+	result, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{})
+	if err == nil {
+		t.Fatalf("Apply() error = nil, want stale plan failure")
+	}
+	if len(result.Targets) != 1 || result.Targets[0].Status != ResultFailed {
+		t.Fatalf("result = %#v, want one failed target", result)
+	}
+	if got := string(fileSystem.files[path]); got != string(externalChange) {
+		t.Fatalf("external change was overwritten:\n%s", got)
+	}
+	if len(fileSystem.renames) != 0 {
+		t.Fatalf("stale apply renamed files: %#v", fileSystem.renames)
+	}
+	if fileSystem.exists(path + ".llmgate.bak") {
+		t.Fatalf("stale apply created backup")
+	}
+}
+
+func TestApplyAbortsWhenCreateTargetAppearsAfterPlanBuilt(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.claude/settings.json"
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(false), []core.WriteTarget{
+		writeTarget(core.WriteTargetClaudeUserSettings, path, false),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	externalContent := []byte(`{"env":{"ANTHROPIC_MODEL":"external"}}` + "\n")
+	fileSystem.addFile(path, externalContent, 0o600)
+
+	result, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{})
+	if err == nil {
+		t.Fatalf("Apply() error = nil, want stale plan failure")
+	}
+	if len(result.Targets) != 1 || result.Targets[0].Status != ResultFailed {
+		t.Fatalf("result = %#v, want one failed target", result)
+	}
+	if got := string(fileSystem.files[path]); got != string(externalContent) {
+		t.Fatalf("appeared file was overwritten:\n%s", got)
+	}
+	if len(fileSystem.renames) != 0 {
+		t.Fatalf("stale create renamed files: %#v", fileSystem.renames)
+	}
+}
+
 func TestUpdateExistingFileAvoidsTimestampedBackupCollision(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	values := testSetupValues()

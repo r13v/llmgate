@@ -75,7 +75,8 @@ func TestParseOnlyExportedShellAssignmentsAreEffective(t *testing.T) {
 	fishProfile, err := ParseProfile([]byte(strings.Join([]string{
 		"set ANTHROPIC_AUTH_TOKEN 'sk-local123456'",
 		"set -l ANTHROPIC_BASE_URL 'https://local.example.com'",
-		"set --export ANTHROPIC_MODEL 'claude-sonnet'",
+		"set --export ANTHROPIC_MODEL 'claude-old'",
+		"set ANTHROPIC_MODEL 'claude-sonnet'",
 		"",
 	}, "\n")), SyntaxFish)
 	if err != nil {
@@ -83,8 +84,8 @@ func TestParseOnlyExportedShellAssignmentsAreEffective(t *testing.T) {
 	}
 	assertProfileValueMissing(t, fishProfile, core.VarAnthropicAuthToken)
 	assertProfileValueMissing(t, fishProfile, core.VarAnthropicBaseURL)
-	assertProfileValue(t, fishProfile, core.VarAnthropicModel, "claude-sonnet", 3)
-	assertIssue(t, fishProfile.Manual, IssueComplex, core.VarAnthropicAuthToken, 1)
+	assertProfileValue(t, fishProfile, core.VarAnthropicModel, "claude-sonnet", 4)
+	assertIssue(t, fishProfile.Duplicates, IssueDuplicate, core.VarAnthropicModel, 0)
 	assertIssue(t, fishProfile.Manual, IssueComplex, core.VarAnthropicBaseURL, 2)
 }
 
@@ -211,6 +212,27 @@ func TestParseAndUpsertFishProfile(t *testing.T) {
 	if string(second) != text {
 		t.Fatalf("UpsertProfile() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
 	}
+}
+
+func TestUpsertFishUpdatesInheritedExportAssignments(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"set -x ANTHROPIC_MODEL 'claude-old'",
+		"set ANTHROPIC_MODEL 'claude-stale'",
+		"",
+	}, "\n"))
+	values := map[string]string{
+		core.VarAnthropicModel: "claude-new",
+	}
+
+	output, result, err := UpsertProfile(input, SyntaxFish, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertProfile() error = %v", err)
+	}
+
+	text := string(output)
+	assertContains(t, text, "set -x ANTHROPIC_MODEL 'claude-new'")
+	assertNotContains(t, text, "claude-stale")
+	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-new", 2)
 }
 
 func TestLegacyManagedBlocksAreNotSpecial(t *testing.T) {

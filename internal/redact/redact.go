@@ -15,7 +15,7 @@ var (
 	bearerPattern          = regexp.MustCompile(`(?i)\b(Bearer\s+)([^\s"',;]+)`)
 	litellmAPIKeyPattern   = regexp.MustCompile(`(?im)\b(x-litellm-api-key\s*:\s*)([^\s"',;]+)`)
 	authTokenAssignPattern = regexp.MustCompile(`(?im)\b(` + core.VarAnthropicAuthToken + `"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,\r\n]+)`)
-	skTokenPattern         = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]{4,}\b`)
+	skTokenPattern         = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]*\b`)
 )
 
 type Options struct {

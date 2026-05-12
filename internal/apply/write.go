@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"time"
@@ -92,6 +93,12 @@ func applyFileTarget(fileSystem system.FileSystem, target TargetPlan, result Tar
 		}
 	}
 
+	if err := verifyTargetUnchanged(fileSystem, target); err != nil {
+		result.Status = ResultFailed
+		result.Error = err.Error()
+		return result, err
+	}
+
 	backupPath, err := createBackup(fileSystem, target, now())
 	if err != nil {
 		result.Status = ResultFailed
@@ -109,6 +116,26 @@ func applyFileTarget(fileSystem system.FileSystem, target TargetPlan, result Tar
 	result.Status = ResultWritten
 	result.Changed = true
 	return result, nil
+}
+
+func verifyTargetUnchanged(fileSystem system.FileSystem, target TargetPlan) error {
+	current, err := fileSystem.ReadFile(target.Target.Path)
+	if err != nil {
+		if isNotExist(err) && !target.OriginalExists {
+			return nil
+		}
+		if isNotExist(err) && target.OriginalExists {
+			return fmt.Errorf("%s changed after the apply plan was built: file no longer exists", target.Target.Title)
+		}
+		return fmt.Errorf("verify %s before writing: %w", target.Target.Title, err)
+	}
+	if !target.OriginalExists {
+		return fmt.Errorf("%s changed after the apply plan was built: file now exists", target.Target.Title)
+	}
+	if !bytes.Equal(current, target.Original) {
+		return fmt.Errorf("%s changed after the apply plan was built", target.Target.Title)
+	}
+	return nil
 }
 
 func writeAtomic(fileSystem system.FileSystem, path string, content []byte, mode fs.FileMode) error {

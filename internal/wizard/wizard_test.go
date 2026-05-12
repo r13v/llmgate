@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/r13v/llmgate/internal/config"
+	"github.com/r13v/llmgate/internal/core"
+	"github.com/r13v/llmgate/internal/diagnose"
 	"github.com/r13v/llmgate/internal/gateway"
 	"github.com/r13v/llmgate/internal/system"
 )
@@ -80,6 +83,66 @@ func TestAccessibleFreshSetupWritesSelectedTargetsAndRedactsToken(t *testing.T) 
 	}
 	assertContains(t, rendered, "Configured")
 	assertContains(t, rendered, "Restart your terminal and IDE")
+}
+
+func TestModelPromptsRedactTokensInGatewayModelIDs(t *testing.T) {
+	token := "sk-goodtoken1234567890"
+	model := "claude-sonnet-" + token
+	display := displayOptions{HomeDir: "/home/ada", GOOS: "linux"}
+	prompts := &recordingPrompter{
+		confirmResponses: []bool{false, false},
+		selectResponses:  []string{model},
+	}
+
+	useRecommendation, err := promptUseRecommendation(context.Background(), prompts, gateway.Recommendation{
+		Primary: model,
+		Haiku:   model,
+		Sonnet:  model,
+		Opus:    model,
+	}, token, display)
+	if err != nil {
+		t.Fatalf("promptUseRecommendation() error = %v", err)
+	}
+	if useRecommendation {
+		t.Fatalf("useRecommendation = true, want false")
+	}
+	values, err := promptManualModels(context.Background(), prompts, []string{model}, core.SetupValues{
+		AuthToken: token,
+		BaseURL:   "https://gateway.example.com",
+	}, gateway.Recommendation{}, display)
+	if err != nil {
+		t.Fatalf("promptManualModels() error = %v", err)
+	}
+	if values.Model != model {
+		t.Fatalf("selected model = %q, want raw model value %q", values.Model, model)
+	}
+
+	renderedPrompts := strings.Join(prompts.descriptions, "\n") + "\n" + strings.Join(prompts.optionLabels, "\n")
+	assertNotContains(t, renderedPrompts, token)
+	assertContains(t, renderedPrompts, "sk-...7890")
+}
+
+func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
+	var output bytes.Buffer
+	token := "plain-secret-token"
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Sections: []core.DiagnosticSection{{
+			Title: "Model Probes",
+			Checks: []core.DiagnosticCheck{{
+				Status:  core.StatusWARN,
+				Title:   "Probe",
+				Summary: `probe failed for model "claude-` + token + `" at /home/ada/.claude/settings.json`,
+			}},
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, "/home/ada")
+	assertContains(t, rendered, "~/")
 }
 
 func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {
@@ -355,6 +418,24 @@ func testGateway(server *httptest.Server) gateway.Client {
 	return gateway.Client{HTTPClient: server.Client(), Cache: gateway.NewCache()}
 }
 
+func configReadForSummary(token string) config.ReadResult {
+	label := core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}
+	return config.ReadResult{
+		Paths: system.DiscoveredPaths{HomeDir: "/home/ada", GOOS: "linux"},
+		Sources: []config.Source{{
+			Label: label,
+			Values: map[string]core.ConfigValue{
+				core.VarAnthropicAuthToken: {
+					Name:   core.VarAnthropicAuthToken,
+					Value:  token,
+					Source: label,
+					Secret: true,
+				},
+			},
+		}},
+	}
+}
+
 func newWizardGateway(t *testing.T, models []string, hook func(http.ResponseWriter, *http.Request) bool) *httptest.Server {
 	t.Helper()
 	modelSet := make(map[string]bool, len(models))
@@ -443,6 +524,44 @@ type promptResponse struct {
 type scriptedPrompter struct {
 	responses []promptResponse
 	index     int
+}
+
+type recordingPrompter struct {
+	confirmResponses []bool
+	selectResponses  []string
+	descriptions     []string
+	optionLabels     []string
+}
+
+func (p *recordingPrompter) Confirm(_ context.Context, prompt ConfirmPrompt) (bool, error) {
+	p.descriptions = append(p.descriptions, prompt.Description)
+	if len(p.confirmResponses) == 0 {
+		return false, errors.New("unexpected confirm prompt")
+	}
+	value := p.confirmResponses[0]
+	p.confirmResponses = p.confirmResponses[1:]
+	return value, nil
+}
+
+func (p *recordingPrompter) Input(context.Context, InputPrompt) (string, error) {
+	return "", errors.New("unexpected input prompt")
+}
+
+func (p *recordingPrompter) Select(_ context.Context, prompt SelectPrompt) (string, error) {
+	p.descriptions = append(p.descriptions, prompt.Description)
+	for _, option := range prompt.Options {
+		p.optionLabels = append(p.optionLabels, option.Label)
+	}
+	if len(p.selectResponses) == 0 {
+		return "", errors.New("unexpected select prompt")
+	}
+	value := p.selectResponses[0]
+	p.selectResponses = p.selectResponses[1:]
+	return value, nil
+}
+
+func (p *recordingPrompter) MultiSelect(context.Context, MultiSelectPrompt) ([]string, error) {
+	return nil, errors.New("unexpected multiselect prompt")
 }
 
 func (p *scriptedPrompter) Confirm(_ context.Context, _ ConfirmPrompt) (bool, error) {
@@ -761,5 +880,12 @@ func assertContains(t *testing.T, got, want string) {
 	t.Helper()
 	if !strings.Contains(got, want) {
 		t.Fatalf("output missing %q:\n%s", want, got)
+	}
+}
+
+func assertNotContains(t *testing.T, got, notWant string) {
+	t.Helper()
+	if strings.Contains(got, notWant) {
+		t.Fatalf("output unexpectedly contains %q:\n%s", notWant, got)
 	}
 }

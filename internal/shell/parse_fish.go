@@ -6,6 +6,15 @@ import (
 	"github.com/r13v/llmgate/internal/core"
 )
 
+type fishExportMode int
+
+const (
+	fishExportManual fishExportMode = iota
+	fishExportInherit
+	fishExportOn
+	fishExportOff
+)
+
 func parseFishLine(line string, lineNumber int) []Assignment {
 	code, comment := splitInlineComment(line)
 	code = strings.TrimSpace(code)
@@ -26,11 +35,11 @@ func parseFishLine(line string, lineNumber int) []Assignment {
 		return complexAssignments(line, lineNumber, comment, names)
 	}
 
-	nameIndex, exports := fishNameIndex(words)
+	nameIndex, exportMode := fishNameIndex(words)
 	if nameIndex < 0 || nameIndex >= len(words) {
 		return complexAssignments(line, lineNumber, comment, names)
 	}
-	if !exports {
+	if exportMode == fishExportManual {
 		return complexAssignments(line, lineNumber, comment, names)
 	}
 
@@ -41,35 +50,65 @@ func parseFishLine(line string, lineNumber int) []Assignment {
 
 	valueWords := words[nameIndex+1:]
 	if len(valueWords) != 1 {
-		return exportedComplexAssignments(line, lineNumber, comment, []string{name})
+		if exportMode == fishExportOn {
+			return exportedComplexAssignments(line, lineNumber, comment, []string{name})
+		}
+		return complexAssignments(line, lineNumber, comment, []string{name})
 	}
 	if valueWords[0].Dynamic {
-		return []Assignment{exportedDynamicAssignment(name, lineNumber, comment)}
+		return []Assignment{fishDynamicAssignment(name, lineNumber, comment, exportMode)}
 	}
-	return []Assignment{exportedSimpleAssignment(name, valueWords[0].Text, lineNumber, comment)}
+	return []Assignment{fishSimpleAssignment(name, valueWords[0].Text, lineNumber, comment, exportMode)}
 }
 
-func fishNameIndex(words []shellWord) (int, bool) {
-	exports := false
+func fishNameIndex(words []shellWord) (int, fishExportMode) {
+	mode := fishExportInherit
+	sawOption := false
 	for i := 1; i < len(words); i++ {
 		text := words[i].Text
 		if !strings.HasPrefix(text, "-") {
-			return i, exports
+			if sawOption && mode == fishExportInherit {
+				return i, fishExportManual
+			}
+			return i, mode
 		}
 		if text == "--" {
 			if i+1 < len(words) {
-				return i + 1, exports
+				return i + 1, mode
 			}
-			return -1, exports
+			return -1, mode
 		}
+		sawOption = true
 		if fishSetOptionExports(text) {
-			exports = true
+			mode = fishExportOn
 		}
 		if fishSetOptionUnexports(text) {
-			exports = false
+			mode = fishExportOff
 		}
 	}
-	return -1, exports
+	return -1, mode
+}
+
+func fishSimpleAssignment(name, value string, line int, comment string, mode fishExportMode) Assignment {
+	switch mode {
+	case fishExportOn:
+		return exportedSimpleAssignment(name, value, line, comment)
+	case fishExportOff:
+		return unexportingSimpleAssignment(name, value, line, comment)
+	default:
+		return inheritingSimpleAssignment(name, value, line, comment)
+	}
+}
+
+func fishDynamicAssignment(name string, line int, comment string, mode fishExportMode) Assignment {
+	switch mode {
+	case fishExportOn:
+		return exportedDynamicAssignment(name, line, comment)
+	case fishExportOff:
+		return unexportingDynamicAssignment(name, line, comment)
+	default:
+		return inheritingDynamicAssignment(name, line, comment)
+	}
 }
 
 func fishSetOptionExports(option string) bool {

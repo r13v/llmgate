@@ -51,6 +51,7 @@ type Assignment struct {
 	Kind           AssignmentKind
 	Comment        string
 	Exports        bool
+	Unexports      bool
 	InheritsExport bool
 }
 
@@ -134,6 +135,9 @@ func (p *Profile) finish() {
 		}
 		if assignment.Exports {
 			exportedByName[assignment.Name] = true
+		}
+		if assignment.Unexports {
+			exportedByName[assignment.Name] = false
 		}
 	}
 

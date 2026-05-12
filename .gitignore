@@ -1,0 +1,13 @@
+.DS_Store
+
+# Build outputs
+/bin/
+/dist/
+/coverage.out
+
+# Local tool installs
+/.tools/
+
+# Editor and test scratch
+*.swp
+*.tmp

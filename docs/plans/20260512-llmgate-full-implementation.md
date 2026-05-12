@@ -90,14 +90,14 @@
 - Create: `internal/version/version.go`
 - Create: `internal/version/version_test.go`
 
-- [ ] Ensure direct dependencies are declared intentionally in `go.mod`, including `charm.land/huh/v2`, `github.com/tailscale/hujson`, `golang.org/x/term`, and `golang.org/x/sys`.
-- [ ] Add MIT license and initial README with project purpose, rolling `main` warning, build/test commands, and install command placeholders.
-- [ ] Add `Makefile` targets: `build`, `test`, `test-e2e`, `lint`, `fmt`, `check`, `clean`, and `.tools/bin` installation for pinned `golangci-lint v2.12.2`.
-- [ ] Add `.golangci.yml` compatible with golangci-lint v2.
-- [ ] Add version package with ldflags-backed `version`, `commit`, `date`, plus Go runtime and target OS/arch in `--version`.
-- [ ] Add initial CLI entrypoint supporting `--help`, `--version`, no-arg dispatch placeholder, and non-zero error handling.
-- [ ] Add tests for version formatting and CLI argument behavior.
-- [ ] Run `make fmt`, `make test`, and `make lint` for this task.
+- [x] Ensure direct dependencies are declared intentionally in `go.mod`, including `charm.land/huh/v2`, `github.com/tailscale/hujson`, `golang.org/x/term`, and `golang.org/x/sys`.
+- [x] Add MIT license and initial README with project purpose, rolling `main` warning, build/test commands, and install command placeholders.
+- [x] Add `Makefile` targets: `build`, `test`, `test-e2e`, `lint`, `fmt`, `check`, `clean`, and `.tools/bin` installation for pinned `golangci-lint v2.12.2`.
+- [x] Add `.golangci.yml` compatible with golangci-lint v2.
+- [x] Add version package with ldflags-backed `version`, `commit`, `date`, plus Go runtime and target OS/arch in `--version`.
+- [x] Add initial CLI entrypoint supporting `--help`, `--version`, no-arg dispatch placeholder, and non-zero error handling.
+- [x] Add tests for version formatting and CLI argument behavior.
+- [x] Run `make fmt`, `make test`, and `make lint` for this task.
 
 ### Task 2: Core Domain Model and Redaction
 **Files:**

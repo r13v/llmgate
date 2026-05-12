@@ -161,15 +161,15 @@
 - Create: `internal/shell/profile_test.go`
 - Create: `internal/shell/testdata/`
 
-- [ ] Implement strict line-based parsing for simple active managed assignments.
-- [ ] Ignore commented assignments for effective values.
-- [ ] Detect duplicate active simple values for the same managed variable.
-- [ ] Detect dynamic or complex assignments and mark them for manual review without modifying them.
-- [ ] Preserve unrelated content, existing comments, commented assignments, unrelated variables, and inline comments on simple assignments.
-- [ ] Write POSIX `export NAME='value'` and fish `set -x NAME 'value'` syntax with safe quoting.
-- [ ] Update simple active assignments in place, append missing values during setup, and avoid appending missing values during repair mode.
-- [ ] Add tests for zsh/bash/fish read/write, comments, inline comments, duplicates, dynamic assignments, idempotency, and no legacy managed block behavior.
-- [ ] Run focused shell tests.
+- [x] Implement strict line-based parsing for simple active managed assignments.
+- [x] Ignore commented assignments for effective values.
+- [x] Detect duplicate active simple values for the same managed variable.
+- [x] Detect dynamic or complex assignments and mark them for manual review without modifying them.
+- [x] Preserve unrelated content, existing comments, commented assignments, unrelated variables, and inline comments on simple assignments.
+- [x] Write POSIX `export NAME='value'` and fish `set -x NAME 'value'` syntax with safe quoting.
+- [x] Update simple active assignments in place, append missing values during setup, and avoid appending missing values during repair mode.
+- [x] Add tests for zsh/bash/fish read/write, comments, inline comments, duplicates, dynamic assignments, idempotency, and no legacy managed block behavior.
+- [x] Run focused shell tests.
 
 ### Task 6: Gateway Client and Model Recommendation
 **Files:**

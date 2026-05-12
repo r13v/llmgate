@@ -232,16 +232,16 @@
 - Create: `internal/apply/windows.go`
 - Create: `internal/apply/apply_test.go`
 
-- [ ] Build setup apply plans for Claude settings, shell profile, Windows user environment, VS Code, Cursor, and manual shell setup target.
-- [ ] Build repair apply plans that update stale simple active shell assignments only.
-- [ ] Display old/new changes with `<unset>`, `<empty>`, masked secrets, shortened home paths, target titles, operations, warnings, and sensitivity flags.
-- [ ] Implement file backups as `<file>.llmgate.bak` or timestamped fallback.
-- [ ] Implement atomic replacement using temp file in the same directory where possible.
-- [ ] Set user-only permissions for sensitive files and backups on a best-effort basis.
-- [ ] Skip unchanged targets without rewriting or backing up.
-- [ ] Implement Windows user environment writes with no backup claim and changed-variable reporting.
-- [ ] Add tests for fresh setup, updates, idempotency, backups, malformed rejection, manual targets, repair mode, Windows env apply, and apply failure behavior.
-- [ ] Run focused apply tests.
+- [x] Build setup apply plans for Claude settings, shell profile, Windows user environment, VS Code, Cursor, and manual shell setup target.
+- [x] Build repair apply plans that update stale simple active shell assignments only.
+- [x] Display old/new changes with `<unset>`, `<empty>`, masked secrets, shortened home paths, target titles, operations, warnings, and sensitivity flags.
+- [x] Implement file backups as `<file>.llmgate.bak` or timestamped fallback.
+- [x] Implement atomic replacement using temp file in the same directory where possible.
+- [x] Set user-only permissions for sensitive files and backups on a best-effort basis.
+- [x] Skip unchanged targets without rewriting or backing up.
+- [x] Implement Windows user environment writes with no backup claim and changed-variable reporting.
+- [x] Add tests for fresh setup, updates, idempotency, backups, malformed rejection, manual targets, repair mode, Windows env apply, and apply failure behavior.
+- [x] Run focused apply tests.
 
 ### Task 10: Wizard Flow with `huh`
 **Files:**

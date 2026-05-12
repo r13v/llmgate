@@ -200,6 +200,8 @@ Requirements:
 - use shell-appropriate quoting when writing values;
 - do not create duplicate managed values when a simple active assignment can be updated;
 - do not modify dynamic or complex assignments automatically.
+- do not create, detect, rewrite, or treat legacy managed shell blocks as special;
+  only active line-based managed assignments participate in shell profile behavior.
 
 POSIX-style output format:
 

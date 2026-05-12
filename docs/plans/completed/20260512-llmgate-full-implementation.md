@@ -332,12 +332,12 @@
 - Modify: `docs/PROJECT_SPEC.md` if implementation-driven clarifications are needed
 - Modify: `docs/plans/20260512-llmgate-full-implementation.md`
 
-- [ ] Update README with usage, privacy behavior, supported platforms, write targets, diagnostics, install scripts, build/test commands, and rolling release warning.
-- [ ] Verify `docs/PROJECT_SPEC.md` matches implementation scope, especially legacy managed blocks being out of scope.
-- [ ] Run full local verification: `make check`.
-- [ ] Run explicit cross-platform compile checks for all release targets.
-- [ ] Verify all acceptance scenario groups are represented by unit, integration, or e2e tests.
-- [ ] Move this plan to `docs/plans/completed/` after implementation is complete and verified.
+- [x] Update README with usage, privacy behavior, supported platforms, write targets, diagnostics, install scripts, build/test commands, and rolling release warning.
+- [x] Verify `docs/PROJECT_SPEC.md` matches implementation scope, especially legacy managed blocks being out of scope.
+- [x] Run full local verification: `make check`.
+- [x] Run explicit cross-platform compile checks for all release targets.
+- [x] Verify all acceptance scenario groups are represented by unit, integration, or e2e tests.
+- [x] Move this plan to `docs/plans/completed/` after implementation is complete and verified.
 
 ## Technical Details
 - CLI flow:

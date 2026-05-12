@@ -233,6 +233,125 @@ func TestReadmeDocumentsInstallScripts(t *testing.T) {
 	}
 }
 
+func TestReadmeDocumentsFinalUserContract(t *testing.T) {
+	readme := readRepoFile(t, "README.md")
+
+	for _, want := range []string{
+		"Run the wizard in an interactive terminal",
+		"llmgate --help",
+		"llmgate --version",
+		"Before startup approval",
+		"does not read files, check file existence, inspect",
+		"environment variables, run local commands, make HTTP requests, or write",
+		"does not use telemetry and does not write file logs",
+		"Secrets are masked",
+		"Linux amd64 and arm64",
+		"macOS amd64 and arm64",
+		"Windows amd64 and arm64",
+		"Claude Code user settings at `~/.claude/settings.json`",
+		"zsh, bash, or fish shell profile assignments",
+		"Windows User environment variables",
+		"VS Code user settings",
+		"Cursor user settings",
+		"Project settings under `./.claude/settings.local.json`",
+		"Diagnostic status severity is `OK < SKIP < WARN < FAIL`",
+		"`make check` runs formatting, linting, default tests",
+		"e2e-tagged acceptance suite",
+		"should be treated as prerelease",
+		"artifacts, not stable versioned releases",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("README missing final user-contract detail %q", want)
+		}
+	}
+}
+
+func TestProjectSpecClarifiesLegacyManagedBlocksOutOfScope(t *testing.T) {
+	spec := readRepoFile(t, "docs", "PROJECT_SPEC.md")
+
+	for _, want := range []string{
+		"do not create, detect, rewrite, or treat legacy managed shell blocks as special",
+		"only active line-based managed assignments participate in shell profile behavior",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Fatalf("project spec missing legacy-block clarification %q", want)
+		}
+	}
+}
+
+func TestAcceptanceScenarioGroupsHaveCoverage(t *testing.T) {
+	spec := readRepoFile(t, "docs", "PROJECT_SPEC.md")
+	coverage := strings.Join([]string{
+		readRepoFile(t, "internal", "e2e", "acceptance_test.go"),
+		readRepoFile(t, "internal", "e2e", "wizard_accessible_test.go"),
+		readRepoFile(t, "internal", "e2e", "wizard_pty_test.go"),
+		readRepoFile(t, "cmd", "llmgate", "main_test.go"),
+		readRepoFile(t, "internal", "gateway", "client_test.go"),
+		readRepoFile(t, "internal", "gateway", "recommend_test.go"),
+		readRepoFile(t, "internal", "shell", "profile_test.go"),
+		readRepoFile(t, "internal", "settings", "settings_test.go"),
+		readRepoFile(t, "internal", "apply", "apply_test.go"),
+		readRepoFile(t, "internal", "diagnose", "diagnose_test.go"),
+		readRepoFile(t, "internal", "diagnose", "report_test.go"),
+	}, "\n")
+
+	for group, evidence := range map[string][]string{
+		"CLI command scenarios": {
+			"TestAccessibleWizardFreshSetupSmoke",
+			"TestWizardNonInteractiveFailure",
+			"TestRunNoArgsRequiresInteractiveTerminal",
+		},
+		"Privacy scenarios": {
+			"TestAcceptanceCLIAndPrivacyScenarios",
+			"TestAccessibleWizardStartupDeclineIsPrivate",
+			"TestAccessibleWizardGatewayErrorRedactsSecret",
+		},
+		"Gateway scenarios": {
+			"TestAcceptanceGatewayAndModelSelectionScenarios",
+			"TestListModels",
+			"TestProbeModel",
+		},
+		"Model selection scenarios": {
+			"TestAcceptanceGatewayAndModelSelectionScenarios",
+			"TestRecommendPrefersSonnetPrimaryAndFallsBackMissingTiersToPrimary",
+		},
+		"macOS/Linux write scenarios": {
+			"TestAcceptanceMacLinuxWriteScenarios",
+			"TestParsePOSIXProfile",
+			"TestParseAndUpsertFishProfile",
+		},
+		"Windows write scenarios": {
+			"TestAcceptanceWindowsIDEScenarios",
+			"TestWindowsUserEnvironmentPlanApplyAndIdempotency",
+		},
+		"IDE scenarios": {
+			"TestAcceptanceWindowsIDEScenarios",
+			"TestUpsertIDEPreservesUnrelatedSettingsEntriesCommentsAndIsIdempotent",
+		},
+		"Project settings scenarios": {
+			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
+			"project overrides warn and are not write targets",
+		},
+		"Repair scenarios": {
+			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
+			"repair updates simple stale shell models and skips cancellation",
+		},
+		"Final diagnostics scenarios": {
+			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
+			"final diagnostics labels OK WARN and FAIL outcomes",
+		},
+	} {
+		if !strings.Contains(spec, "### "+group) {
+			t.Fatalf("project spec missing acceptance group %q", group)
+		}
+		for _, want := range evidence {
+			if !strings.Contains(coverage, want) {
+				t.Fatalf("%s missing test evidence %q", group, want)
+			}
+		}
+	}
+}
+
 func readRepoFile(t *testing.T, path ...string) string {
 	t.Helper()
 

@@ -26,8 +26,11 @@ func parseFishLine(line string, lineNumber int) []Assignment {
 		return complexAssignments(line, lineNumber, comment, names)
 	}
 
-	nameIndex := fishNameIndex(words)
+	nameIndex, exports := fishNameIndex(words)
 	if nameIndex < 0 || nameIndex >= len(words) {
+		return complexAssignments(line, lineNumber, comment, names)
+	}
+	if !exports {
 		return complexAssignments(line, lineNumber, comment, names)
 	}
 
@@ -38,26 +41,53 @@ func parseFishLine(line string, lineNumber int) []Assignment {
 
 	valueWords := words[nameIndex+1:]
 	if len(valueWords) != 1 {
-		return complexAssignments(line, lineNumber, comment, []string{name})
+		return exportedComplexAssignments(line, lineNumber, comment, []string{name})
 	}
 	if valueWords[0].Dynamic {
-		return []Assignment{dynamicAssignment(name, lineNumber, comment)}
+		return []Assignment{exportedDynamicAssignment(name, lineNumber, comment)}
 	}
-	return []Assignment{simpleAssignment(name, valueWords[0].Text, lineNumber, comment)}
+	return []Assignment{exportedSimpleAssignment(name, valueWords[0].Text, lineNumber, comment)}
 }
 
-func fishNameIndex(words []shellWord) int {
+func fishNameIndex(words []shellWord) (int, bool) {
+	exports := false
 	for i := 1; i < len(words); i++ {
 		text := words[i].Text
 		if !strings.HasPrefix(text, "-") {
-			return i
+			return i, exports
 		}
 		if text == "--" {
 			if i+1 < len(words) {
-				return i + 1
+				return i + 1, exports
 			}
-			return -1
+			return -1, exports
+		}
+		if fishSetOptionExports(text) {
+			exports = true
+		}
+		if fishSetOptionUnexports(text) {
+			exports = false
 		}
 	}
-	return -1
+	return -1, exports
+}
+
+func fishSetOptionExports(option string) bool {
+	if option == "--export" {
+		return true
+	}
+	if strings.HasPrefix(option, "--") {
+		return false
+	}
+	return strings.Contains(option[1:], "x")
+}
+
+func fishSetOptionUnexports(option string) bool {
+	if option == "--unexport" {
+		return true
+	}
+	if strings.HasPrefix(option, "--") {
+		return false
+	}
+	return strings.Contains(option[1:], "u")
 }

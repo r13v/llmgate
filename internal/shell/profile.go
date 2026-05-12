@@ -45,11 +45,13 @@ type Value struct {
 }
 
 type Assignment struct {
-	Name    string
-	Value   string
-	Line    int
-	Kind    AssignmentKind
-	Comment string
+	Name           string
+	Value          string
+	Line           int
+	Kind           AssignmentKind
+	Comment        string
+	Exports        bool
+	InheritsExport bool
 }
 
 type Issue struct {
@@ -99,13 +101,20 @@ func ParseProfile(data []byte, syntax Syntax) (Profile, error) {
 func (p *Profile) finish() {
 	simpleByName := make(map[string][]Assignment)
 	lastByName := make(map[string]Assignment)
+	exportedByName := make(map[string]bool)
 
 	for _, assignment := range p.Assignments {
-		lastByName[assignment.Name] = assignment
+		effective := assignment.Exports || (assignment.InheritsExport && exportedByName[assignment.Name])
 		switch assignment.Kind {
 		case AssignmentSimple:
-			simpleByName[assignment.Name] = append(simpleByName[assignment.Name], assignment)
+			if effective {
+				simpleByName[assignment.Name] = append(simpleByName[assignment.Name], assignment)
+				lastByName[assignment.Name] = assignment
+			}
 		case AssignmentDynamic:
+			if effective {
+				lastByName[assignment.Name] = assignment
+			}
 			p.Manual = append(p.Manual, Issue{
 				Kind:    IssueDynamic,
 				Name:    assignment.Name,
@@ -113,12 +122,18 @@ func (p *Profile) finish() {
 				Summary: fmt.Sprintf("%s uses a dynamic shell assignment on line %d", assignment.Name, assignment.Line),
 			})
 		case AssignmentComplex:
+			if effective {
+				lastByName[assignment.Name] = assignment
+			}
 			p.Manual = append(p.Manual, Issue{
 				Kind:    IssueComplex,
 				Name:    assignment.Name,
 				Line:    assignment.Line,
 				Summary: fmt.Sprintf("%s uses a complex shell assignment on line %d", assignment.Name, assignment.Line),
 			})
+		}
+		if assignment.Exports {
+			exportedByName[assignment.Name] = true
 		}
 	}
 

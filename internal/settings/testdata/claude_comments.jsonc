@@ -1,0 +1,10 @@
+{
+  // unrelated top-level settings must survive rewrites
+  "theme": "dark",
+  "env": {
+    // unrelated environment values must survive rewrites
+    "PATH": "/usr/bin",
+    "ANTHROPIC_AUTH_TOKEN": "sk-oldtoken123456",
+    "ANTHROPIC_MODEL": 42
+  }
+}

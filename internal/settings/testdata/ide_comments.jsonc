@@ -1,0 +1,11 @@
+{
+  // unrelated IDE settings must survive rewrites
+  "editor.fontSize": 14,
+  "claudeCode.selectedModel": "old-model",
+  "claudeCode.environmentVariables": [
+    // unrelated entries must survive rewrites
+    { "name": "PATH", "value": "/usr/bin" },
+    { "name": "ANTHROPIC_AUTH_TOKEN", "value": "sk-oldtoken123456" },
+    { "name": "ANTHROPIC_DEFAULT_HAIKU_MODEL", "value": 42 }
+  ]
+}

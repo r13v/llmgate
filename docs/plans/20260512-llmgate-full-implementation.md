@@ -143,14 +143,14 @@
 - Create: `internal/settings/settings_test.go`
 - Create: `internal/settings/testdata/`
 
-- [ ] Parse JSONC using `hujson`, requiring object roots for Claude and IDE settings.
-- [ ] Read only string values under Claude `env`.
-- [ ] Read IDE `claudeCode.environmentVariables` entries with string `name` and `value`, plus string `claudeCode.selectedModel`.
-- [ ] Upsert Claude managed values under `env`, preserving unrelated top-level keys and rejecting malformed settings.
-- [ ] Upsert IDE selected model and environment variable entries by name, preserving unrelated settings and entries.
-- [ ] Ensure trailing newline and reasonable JSONC/comment preservation.
-- [ ] Add tests for valid JSONC, comments, malformed files, non-object roots, unrelated preservation, idempotency, and token redaction in error paths.
-- [ ] Run focused settings tests.
+- [x] Parse JSONC using `hujson`, requiring object roots for Claude and IDE settings.
+- [x] Read only string values under Claude `env`.
+- [x] Read IDE `claudeCode.environmentVariables` entries with string `name` and `value`, plus string `claudeCode.selectedModel`.
+- [x] Upsert Claude managed values under `env`, preserving unrelated top-level keys and rejecting malformed settings.
+- [x] Upsert IDE selected model and environment variable entries by name, preserving unrelated settings and entries.
+- [x] Ensure trailing newline and reasonable JSONC/comment preservation.
+- [x] Add tests for valid JSONC, comments, malformed files, non-object roots, unrelated preservation, idempotency, and token redaction in error paths.
+- [x] Run focused settings tests.
 
 ### Task 5: Shell Profile Parser and Writer
 **Files:**

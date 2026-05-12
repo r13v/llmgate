@@ -3,6 +3,7 @@ package apply
 import (
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/r13v/llmgate/internal/system"
@@ -39,7 +40,25 @@ func chooseBackupPath(fileSystem system.FileSystem, path string, now time.Time) 
 		}
 		return "", fmt.Errorf("check backup path %s: %w", primary, err)
 	}
-	return fmt.Sprintf("%s.llmgate.%s.bak", path, now.UTC().Format("20060102-150405")), nil
+
+	timestamped := fmt.Sprintf("%s.llmgate.%s.bak", path, now.UTC().Format("20060102-150405"))
+	return firstAvailableBackupPath(fileSystem, timestamped)
+}
+
+func firstAvailableBackupPath(fileSystem system.FileSystem, timestamped string) (string, error) {
+	for index := 0; ; index++ {
+		candidate := timestamped
+		if index > 0 {
+			candidate = fmt.Sprintf("%s.%d.bak", strings.TrimSuffix(timestamped, ".bak"), index)
+		}
+		_, err := fileSystem.Stat(candidate)
+		if err != nil {
+			if isNotExist(err) {
+				return candidate, nil
+			}
+			return "", fmt.Errorf("check backup path %s: %w", candidate, err)
+		}
+	}
 }
 
 func fileMode(sensitive bool) fs.FileMode {

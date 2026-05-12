@@ -12,6 +12,7 @@ import (
 	"github.com/r13v/llmgate/internal/config"
 	"github.com/r13v/llmgate/internal/core"
 	"github.com/r13v/llmgate/internal/gateway"
+	"github.com/r13v/llmgate/internal/shell"
 	"github.com/r13v/llmgate/internal/system"
 )
 
@@ -115,6 +116,78 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 	}
 }
 
+func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-good", "claude-probe-fail"})
+	defer server.Close()
+
+	values := allRequiredValues("sk-goodtoken1234", server.URL, "claude-good")
+	values[core.VarAnthropicDefaultHaikuModel] = "claude-missing"
+	values[core.VarAnthropicDefaultSonnetModel] = "claude-probe-fail"
+	values[core.VarAnthropicDefaultOpusModel] = "claude-good"
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, values, ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !checkSummaryStatus(result, "Model Probes", `probe failed for model "claude-probe-fail"`, core.StatusFAIL) {
+		t.Fatalf("available model probe failure was not reported:\n%s", Render(result, RenderOptions{}))
+	}
+}
+
+func TestRunReportsConfigSourceConflictsWithRedaction(t *testing.T) {
+	claudeValues := allRequiredValues("sk-claudeconflict1234", "https://gateway.example.com", "claude-3-sonnet")
+	shellValues := allRequiredValues("sk-shellconflict5678", "https://gateway.example.com", "claude-3-sonnet")
+	shellSource := testSource(core.SourceLabel{Kind: core.SourceShellProfile, Path: "/home/ada/.zshrc"}, shellValues, "")
+	shellSource.ShellIssues = []shell.Issue{
+		{
+			Kind:    shell.IssueDuplicate,
+			Name:    core.VarAnthropicModel,
+			Lines:   []int{4, 8},
+			Summary: core.VarAnthropicModel + " has multiple active simple shell assignments on lines 4, 8",
+		},
+		{
+			Kind:    shell.IssueDynamic,
+			Name:    core.VarAnthropicDefaultHaikuModel,
+			Line:    12,
+			Summary: core.VarAnthropicDefaultHaikuModel + " uses a dynamic shell assignment on line 12",
+		},
+	}
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, claudeValues, ""),
+		shellSource,
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{NetworkChecks: false})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	rendered := Render(result, RenderOptions{})
+	if !sectionStatus(result, "Config Source Conflicts", core.StatusWARN) {
+		t.Fatalf("conflict section was not WARN:\n%s", rendered)
+	}
+	for _, want := range []string{
+		core.VarAnthropicAuthToken + " differs across persisted sources",
+		core.VarAnthropicModel + " has multiple active simple shell assignments on lines 4, 8",
+		core.VarAnthropicDefaultHaikuModel + " uses a dynamic shell assignment on line 12",
+		"sk-[redacted]",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("conflict report missing %q:\n%s", want, rendered)
+		}
+	}
+	for _, secret := range []string{"sk-claudeconflict1234", "sk-shellconflict5678"} {
+		if strings.Contains(rendered, secret) {
+			t.Fatalf("conflict report leaked secret %q:\n%s", secret, rendered)
+		}
+	}
+}
+
 func TestProjectAndIDEValidationWarnSeparately(t *testing.T) {
 	server := newGatewayServer(t, []string{"claude-3-haiku", "claude-3-sonnet", "claude-3-opus"})
 	defer server.Close()
@@ -207,7 +280,6 @@ func allRequiredValues(token, baseURL, model string) map[string]string {
 func testSource(label core.SourceLabel, values map[string]string, selectedModel string) config.Source {
 	source := config.Source{
 		Label:  label,
-		Exists: true,
 		Values: make(map[string]core.ConfigValue),
 	}
 	for name, value := range values {

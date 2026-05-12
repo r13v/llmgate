@@ -76,7 +76,7 @@ func readClaudeUser(fileSystem system.FileSystem, paths system.DiscoveredPaths, 
 		))
 		return
 	}
-	result.Sources = append(result.Sources, source(label, true, parsed.Env))
+	result.Sources = append(result.Sources, source(label, parsed.Env))
 }
 
 func readPersistedEnvironment(sys system.System, fileSystem system.FileSystem, paths system.DiscoveredPaths, result *ReadResult) {
@@ -126,7 +126,7 @@ func readPersistedEnvironment(sys system.System, fileSystem system.FileSystem, p
 	for name, value := range profile.Values {
 		values[name] = value.Value
 	}
-	src := source(label, true, values)
+	src := source(label, values)
 	src.ShellIssues = append(src.ShellIssues, profile.Issues...)
 	result.Sources = append(result.Sources, src)
 }
@@ -146,7 +146,7 @@ func readWindowsUserEnvironment(windowsEnv system.WindowsUserEnvironment, result
 		))
 		return
 	}
-	result.Sources = append(result.Sources, source(label, true, values))
+	result.Sources = append(result.Sources, source(label, values))
 }
 
 func readCurrentEnvironment(env system.ProcessEnvironment, result *ReadResult) {
@@ -155,7 +155,7 @@ func readCurrentEnvironment(env system.ProcessEnvironment, result *ReadResult) {
 	if len(values) == 0 {
 		return
 	}
-	result.Sources = append(result.Sources, source(label, true, values))
+	result.Sources = append(result.Sources, source(label, values))
 }
 
 func readIDE(fileSystem system.FileSystem, target system.IDETarget, kind core.SourceKind, result *ReadResult) {
@@ -186,7 +186,7 @@ func readIDE(fileSystem system.FileSystem, target system.IDETarget, kind core.So
 		return
 	}
 
-	src := source(label, true, parsed.Environment)
+	src := source(label, parsed.Environment)
 	if parsed.HasSelectedModel {
 		model := selectedModelValue(label, parsed.SelectedModel)
 		src.SelectedModel = &model
@@ -221,7 +221,7 @@ func readProject(fileSystem system.FileSystem, path string, exists bool, kind co
 		))
 		return
 	}
-	result.Sources = append(result.Sources, source(label, true, parsed.Env))
+	result.Sources = append(result.Sources, source(label, parsed.Env))
 }
 
 func syntaxForShell(kind system.ShellKind) (shell.Syntax, error) {

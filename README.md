@@ -18,27 +18,42 @@ Unix:
 
 ```sh
 curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh
+curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh -s -- --dry-run
 ```
 
 The Unix installer downloads the matching Linux or macOS archive, verifies its
 SHA-256 digest against `checksums.txt`, and installs `llmgate` into
 `/usr/local/bin` when that directory is writable, otherwise `$HOME/.local/bin`.
+It requires `curl` or `wget`, `tar`, and one SHA-256 tool: `sha256sum`,
+`shasum`, or `openssl`.
 Supported overrides are:
 
 - `LLMGATE_INSTALL_DIR`
 - `LLMGATE_OS` (`linux` or `darwin`)
 - `LLMGATE_ARCH` (`amd64` or `arm64`)
+- `LLMGATE_RELEASE_URL`
+- `LLMGATE_PACKAGE_PREFIX`
 
 PowerShell:
 
 ```powershell
 iwr https://github.com/r13v/llmgate/releases/download/main/install.ps1 -UseB | iex
+scripts/install.ps1 -DryRun
 ```
 
 The PowerShell installer downloads the matching Windows archive, verifies
 `checksums.txt`, and installs `llmgate.exe` into
 `$env:LOCALAPPDATA\Programs\llmgate\bin`. Set `LLMGATE_ADD_TO_PATH=1` before
-running it to add that directory to the User PATH.
+running it to add that directory to the User PATH. It requires PowerShell with
+`Invoke-WebRequest`, `Get-FileHash`, and `Expand-Archive`.
+Supported overrides are:
+
+- `LLMGATE_INSTALL_DIR`
+- `LLMGATE_OS` (`windows`)
+- `LLMGATE_ARCH` (`amd64` or `arm64`)
+- `LLMGATE_RELEASE_URL`
+- `LLMGATE_PACKAGE_PREFIX`
+- `LLMGATE_ADD_TO_PATH=1`
 
 The installers do not support SemVer version selection; they only install the
 rolling `main` prerelease.
@@ -68,6 +83,18 @@ llmgate --version
 
 No-argument setup requires an interactive terminal. Non-interactive invocation
 fails with a clear message and does not start the wizard.
+
+## Gateway Compatibility
+
+The gateway must expose an OpenAI-compatible model list and chat completions
+surface. `llmgate` normalizes the base URL by removing query strings and
+fragments, then requests `/v1/models`. If that endpoint returns `404`, it tries
+`/models` as a fallback. Model-list responses must contain model IDs in
+`data[].id`.
+
+For model probes, `llmgate` sends a small `POST /v1/chat/completions` request
+with a single user `ping` message and `max_tokens: 1`. Requests include both
+`Authorization: Bearer <token>` and `x-litellm-api-key: <token>` headers.
 
 ## Privacy and Safety
 
@@ -122,6 +149,32 @@ Setup writes gateway credentials, model mapping, and privacy or traffic defaults
 for Claude Code. Repair mode only updates writable stale simple shell model
 assignments; it does not add missing shell variables.
 
+## Managed Configuration Values
+
+Required gateway and model values:
+
+| Name | Purpose |
+| --- | --- |
+| `ANTHROPIC_AUTH_TOKEN` | Gateway API token |
+| `ANTHROPIC_BASE_URL` | LiteLLM-compatible gateway base URL |
+| `ANTHROPIC_MODEL` | Primary Claude Code model |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku tier model |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | Sonnet tier model |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Opus tier model |
+
+Behavior and privacy defaults written during setup:
+
+| Name | Value | Purpose |
+| --- | --- | --- |
+| `CLAUDE_CODE_ENABLE_TELEMETRY` | `0` | Disable Claude Code telemetry |
+| `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | Reduce Claude Code optional network traffic |
+| `OTEL_METRICS_EXPORTER` | `otlp` | Keep telemetry exporter explicit |
+| `ANTHROPIC_DISABLE_NONESSENTIAL_TRAFFIC` | `1` | Reduce optional Anthropic traffic |
+| `DISABLE_PROMPT_CACHING_HAIKU` | `1` | Disable LiteLLM prompt caching for Haiku tier |
+| `DISABLE_PROMPT_CACHING_SONNET` | `1` | Disable LiteLLM prompt caching for Sonnet tier |
+| `DISABLE_PROMPT_CACHING_OPUS` | `1` | Disable LiteLLM prompt caching for Opus tier |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS` | `1` | Disable Claude Code experimental beta headers |
+
 ## Diagnostics
 
 Diagnostics cover:
@@ -161,6 +214,16 @@ make package
 `.tools/bin`. `make check` runs formatting, linting, default tests, and the
 e2e-tagged acceptance suite. `make package` builds the rolling release archives
 for Linux, macOS, and Windows on amd64 and arm64.
+
+Packaging can be exercised directly:
+
+```sh
+scripts/package.sh --dry-run --dist dist
+```
+
+`scripts/package.sh` requires Bash, Go, `tar`, and `zip`. Supported environment
+overrides are `GO`, `VERSION`, `COMMIT`, `DATE`, `DIST_DIR`, and
+`PACKAGE_PREFIX`.
 
 ## CI
 

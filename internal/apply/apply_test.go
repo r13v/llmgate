@@ -139,6 +139,42 @@ func TestUpdateExistingFileCreatesTimestampedBackupAtomicallyAndIdempotentRerunS
 	}
 }
 
+func TestUpdateExistingFileAvoidsTimestampedBackupCollision(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.claude/settings.json"
+	original := []byte(`{"env":{"ANTHROPIC_MODEL":"old-model"}}`)
+	fileSystem.addFile(path, original, 0o600)
+	fileSystem.addFile(path+".llmgate.bak", []byte("primary backup"), 0o600)
+	fileSystem.addFile(path+".llmgate.20260513-010203.bak", []byte("timestamp backup"), 0o600)
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(true), []core.WriteTarget{
+		writeTarget(core.WriteTargetClaudeUserSettings, path, true),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	result, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{
+		Now: func() time.Time {
+			return time.Date(2026, 5, 13, 1, 2, 3, 0, time.UTC)
+		},
+	})
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+
+	backupPath := path + ".llmgate.20260513-010203.1.bak"
+	if result.Targets[0].BackupPath != backupPath {
+		t.Fatalf("backup path = %q, want %q", result.Targets[0].BackupPath, backupPath)
+	}
+	if got := string(fileSystem.files[backupPath]); got != string(original) {
+		t.Fatalf("backup content = %q, want original", got)
+	}
+	if got := string(fileSystem.files[path+".llmgate.20260513-010203.bak"]); got != "timestamp backup" {
+		t.Fatalf("existing timestamp backup was overwritten: %q", got)
+	}
+}
+
 func TestMalformedSettingsRejectedBeforeWrite(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	path := "/home/ada/.claude/settings.json"

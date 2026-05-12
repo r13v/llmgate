@@ -157,6 +157,33 @@ func TestAcceptanceGatewayAndModelSelectionScenarios(t *testing.T) {
 		if retry.gateway.listCalls < 2 {
 			t.Fatalf("retry did not bypass failed cache; listCalls=%d", retry.gateway.listCalls)
 		}
+
+		edit := newHarness(t)
+		prompts := &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "input", value: "sk-bad-token-1234567890"},
+			{kind: "input", value: edit.gateway.url()},
+			{kind: "select", value: "edit"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: altTestToken},
+			{kind: "input", value: edit.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		}}
+		output, err = edit.runWithPrompter(prompts)
+		if err != nil {
+			t.Fatalf("edit setup error = %v\n%s", err, output)
+		}
+		if !prompts.sawPromptTitle("Gateway validation failed") {
+			t.Fatalf("gateway edit recovery prompt not shown; records=%+v", prompts.records)
+		}
+		if edit.gateway.listCalls < 2 {
+			t.Fatalf("gateway edit did not revalidate; listCalls=%d", edit.gateway.listCalls)
+		}
+		assertFileContains(t, edit.fs, "/home/ada/.claude/settings.json", altTestToken)
+		assertFileNotContains(t, edit.fs, "/home/ada/.claude/settings.json", "sk-bad-token-1234567890")
 	})
 
 	t.Run("manual advanced models unavailable and probe failure block writes", func(t *testing.T) {
@@ -236,6 +263,88 @@ func TestAcceptanceGatewayAndModelSelectionScenarios(t *testing.T) {
 		if probeFail.fs.mutationOps() != 0 {
 			t.Fatalf("probe failure wrote filesystem %d time(s)", probeFail.fs.mutationOps())
 		}
+
+		chooseAfterUnavailable := newHarness(t)
+		prompts = &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "input", value: testToken},
+			{kind: "input", value: chooseAfterUnavailable.gateway.url()},
+			{kind: "confirm", confirm: false},
+			{kind: "select", value: missingModel},
+			{kind: "confirm", confirm: false},
+			{kind: "select", value: "choose"},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		}}
+		output, err = chooseAfterUnavailable.runWithPrompter(prompts)
+		if err != nil {
+			t.Fatalf("choose-after-unavailable setup error = %v\n%s", err, output)
+		}
+		if !prompts.sawPromptTitle("Selected model unavailable") {
+			t.Fatalf("unavailable choose recovery prompt not shown; records=%+v", prompts.records)
+		}
+		assertFileContains(t, chooseAfterUnavailable.fs, "/home/ada/.claude/settings.json", sonnetModel)
+
+		chooseAfterProbe := newHarness(t, withGatewayOptions(t, fakeGatewayOptions{
+			probeFailures: map[string]gatewayResponse{
+				sonnetModel: {status: http.StatusBadGateway, body: `{"detail":"probe failed"}`},
+			},
+		}))
+		prompts = &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "input", value: testToken},
+			{kind: "input", value: chooseAfterProbe.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "choose"},
+			{kind: "confirm", confirm: false},
+			{kind: "select", value: haikuModel},
+			{kind: "confirm", confirm: false},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		}}
+		output, err = chooseAfterProbe.runWithPrompter(prompts)
+		if err != nil {
+			t.Fatalf("choose-after-probe setup error = %v\n%s", err, output)
+		}
+		if !prompts.sawPromptTitle("Model probe failed") {
+			t.Fatalf("probe choose recovery prompt not shown; records=%+v", prompts.records)
+		}
+		assertFileContains(t, chooseAfterProbe.fs, "/home/ada/.claude/settings.json", haikuModel)
+
+		editAfterProbe := newHarness(t, withGatewayOptions(t, fakeGatewayOptions{
+			probeFailures: map[string]gatewayResponse{
+				sonnetModel: {status: http.StatusBadGateway, body: `{"detail":"probe failed"}`},
+			},
+		}))
+		goodGateway := newFakeGateway(t, fakeGatewayOptions{models: recommendedModels})
+		t.Cleanup(goodGateway.close)
+		prompts = &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "input", value: testToken},
+			{kind: "input", value: editAfterProbe.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "edit"},
+			{kind: "confirm", confirm: true},
+			{kind: "input", value: goodGateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		}}
+		output, err = editAfterProbe.runWithPrompter(prompts)
+		if err != nil {
+			t.Fatalf("edit-after-probe setup error = %v\n%s", err, output)
+		}
+		if !prompts.sawPromptTitle("Model probe failed") {
+			t.Fatalf("probe edit recovery prompt not shown; records=%+v", prompts.records)
+		}
+		if goodGateway.probeCalls == 0 {
+			t.Fatalf("model edit recovery did not use edited gateway")
+		}
+		assertFileContains(t, editAfterProbe.fs, "/home/ada/.claude/settings.json", goodGateway.url())
 	})
 }
 

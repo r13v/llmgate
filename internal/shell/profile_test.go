@@ -19,7 +19,10 @@ func TestParsePOSIXProfilesReadSimpleAssignmentsAndIgnoreComments(t *testing.T) 
 
 	for _, name := range []string{"zsh", "bash"} {
 		t.Run(name, func(t *testing.T) {
-			profile := ParsePOSIX(input)
+			profile, err := ParseProfile(input, SyntaxPOSIX)
+			if err != nil {
+				t.Fatalf("ParseProfile() error = %v", err)
+			}
 			assertProfileValue(t, profile, core.VarAnthropicAuthToken, "sk-active123456", 2)
 			assertProfileValue(t, profile, core.VarAnthropicBaseURL, "https://gateway.example.com", 3)
 			if _, ok := profile.Values["PATH"]; ok {
@@ -43,7 +46,10 @@ func TestParseDetectsDuplicateDynamicAndComplexPOSIXAssignments(t *testing.T) {
 		"",
 	}, "\n"))
 
-	profile := ParsePOSIX(input)
+	profile, err := ParseProfile(input, SyntaxPOSIX)
+	if err != nil {
+		t.Fatalf("ParseProfile() error = %v", err)
+	}
 	assertProfileValue(t, profile, core.VarAnthropicModel, "claude-new", 2)
 	assertIssue(t, profile.Duplicates, IssueDuplicate, core.VarAnthropicModel, 0)
 	assertIssue(t, profile.Manual, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 3)
@@ -69,9 +75,9 @@ func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
 		core.VarAnthropicModel:     "claude-primary",
 	}
 
-	output, result, err := UpsertPOSIX(input, values, ModeSetup)
+	output, result, err := UpsertProfile(input, SyntaxPOSIX, values, ModeSetup)
 	if err != nil {
-		t.Fatalf("UpsertPOSIX() error = %v", err)
+		t.Fatalf("UpsertProfile() error = %v", err)
 	}
 	text := string(output)
 	assertContains(t, text, "# shell setup")
@@ -87,12 +93,12 @@ func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
 	assertIssue(t, result.Skipped, IssueDynamic, core.VarAnthropicModel, 5)
 	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-primary", 7)
 
-	second, _, err := UpsertPOSIX(output, values, ModeSetup)
+	second, _, err := UpsertProfile(output, SyntaxPOSIX, values, ModeSetup)
 	if err != nil {
-		t.Fatalf("second UpsertPOSIX() error = %v", err)
+		t.Fatalf("second UpsertProfile() error = %v", err)
 	}
 	if string(second) != text {
-		t.Fatalf("UpsertPOSIX() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
+		t.Fatalf("UpsertProfile() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
 	}
 }
 
@@ -103,14 +109,36 @@ func TestUpsertRepairModeUpdatesOnlyExistingSimpleAssignments(t *testing.T) {
 		core.VarAnthropicModel:   "claude-new",
 	}
 
-	output, result, err := UpsertPOSIX(input, values, ModeRepair)
+	output, result, err := UpsertProfile(input, SyntaxPOSIX, values, ModeRepair)
 	if err != nil {
-		t.Fatalf("UpsertPOSIX repair error = %v", err)
+		t.Fatalf("UpsertProfile repair error = %v", err)
 	}
 	text := string(output)
 	assertContains(t, text, "export ANTHROPIC_MODEL='claude-new'")
 	assertNotContains(t, text, core.VarAnthropicBaseURL)
 	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-new", 1)
+}
+
+func TestUpsertSetupAppendsWhenLaterDynamicAssignmentWouldWin(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"export ANTHROPIC_MODEL='claude-old'",
+		"export ANTHROPIC_MODEL=$(choose-model)",
+		"",
+	}, "\n"))
+	values := map[string]string{
+		core.VarAnthropicModel: "claude-new",
+	}
+
+	output, result, err := UpsertProfile(input, SyntaxPOSIX, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertProfile() error = %v", err)
+	}
+
+	text := string(output)
+	assertContains(t, text, "export ANTHROPIC_MODEL='claude-new'")
+	assertContains(t, text, "export ANTHROPIC_MODEL=$(choose-model)")
+	assertIssue(t, result.Skipped, IssueDynamic, core.VarAnthropicModel, 2)
+	assertProfileValue(t, result.Profile, core.VarAnthropicModel, "claude-new", 3)
 }
 
 func TestParseAndUpsertFishProfile(t *testing.T) {
@@ -123,7 +151,10 @@ func TestParseAndUpsertFishProfile(t *testing.T) {
 		"",
 	}, "\n"))
 
-	profile := ParseFish(input)
+	profile, err := ParseProfile(input, SyntaxFish)
+	if err != nil {
+		t.Fatalf("ParseProfile() error = %v", err)
+	}
 	assertProfileValue(t, profile, core.VarAnthropicAuthToken, "sk-oldtoken123456", 2)
 	assertProfileValue(t, profile, core.VarAnthropicBaseURL, "https://old.example.com", 3)
 	assertIssue(t, profile.Manual, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 4)
@@ -133,9 +164,9 @@ func TestParseAndUpsertFishProfile(t *testing.T) {
 		core.VarAnthropicBaseURL:           "https://gateway.example.com",
 		core.VarAnthropicDefaultHaikuModel: "claude-haiku",
 	}
-	output, result, err := UpsertFish(input, values, ModeSetup)
+	output, result, err := UpsertProfile(input, SyntaxFish, values, ModeSetup)
 	if err != nil {
-		t.Fatalf("UpsertFish() error = %v", err)
+		t.Fatalf("UpsertProfile() error = %v", err)
 	}
 	text := string(output)
 	assertContains(t, text, "set -x ANTHROPIC_AUTH_TOKEN 'sk-new\\'token\\\\123456'")
@@ -144,12 +175,12 @@ func TestParseAndUpsertFishProfile(t *testing.T) {
 	assertContains(t, text, "set -x ANTHROPIC_DEFAULT_HAIKU_MODEL 'claude-haiku'")
 	assertIssue(t, result.Skipped, IssueDynamic, core.VarAnthropicDefaultHaikuModel, 4)
 
-	second, _, err := UpsertFish(output, values, ModeSetup)
+	second, _, err := UpsertProfile(output, SyntaxFish, values, ModeSetup)
 	if err != nil {
-		t.Fatalf("second UpsertFish() error = %v", err)
+		t.Fatalf("second UpsertProfile() error = %v", err)
 	}
 	if string(second) != text {
-		t.Fatalf("UpsertFish() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
+		t.Fatalf("UpsertProfile() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
 	}
 }
 
@@ -162,9 +193,9 @@ func TestLegacyManagedBlocksAreNotSpecial(t *testing.T) {
 		core.VarAnthropicBaseURL: "https://gateway.example.com",
 	}
 
-	output, result, err := UpsertPOSIX(input, values, ModeSetup)
+	output, result, err := UpsertProfile(input, SyntaxPOSIX, values, ModeSetup)
 	if err != nil {
-		t.Fatalf("UpsertPOSIX() error = %v", err)
+		t.Fatalf("UpsertProfile() error = %v", err)
 	}
 	text := string(output)
 	assertContains(t, text, "# BEGIN LLMGATE")

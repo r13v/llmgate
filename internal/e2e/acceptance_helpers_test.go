@@ -5,6 +5,7 @@ package e2e
 import (
 	"io/fs"
 	"sort"
+	"testing"
 )
 
 func withPlatform(targetOS, home, work string) harnessOption {
@@ -86,6 +87,24 @@ func (p *scriptedPrompter) sawSelectOption(label string) bool {
 		}
 	}
 	return false
+}
+
+func (p *scriptedPrompter) sawPromptTitle(title string) bool {
+	for _, record := range p.records {
+		if record.title == title {
+			return true
+		}
+	}
+	return false
+}
+
+func assertFileNotContains(t *testing.T, f *trackingFS, path, notWant string) {
+	t.Helper()
+	data, ok := f.file(path)
+	if !ok {
+		t.Fatalf("file %s missing", path)
+	}
+	assertNotContains(t, data, notWant)
 }
 
 func sortedCopy(values []string) []string {

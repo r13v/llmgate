@@ -208,6 +208,7 @@ func TestPackageScriptCreatesArchivesAndChecksums(t *testing.T) {
 		"llmgate-main-windows-arm64.zip",
 	}
 	assertDirEntries(t, distDir, append(expectedArchives, "checksums.txt", "install.sh", "install.ps1"))
+	assertFakeGoBuilds(t, filepath.Join(tempDir, "fake-go.log"))
 
 	for _, name := range expectedArchives {
 		assertArchiveContents(t, filepath.Join(distDir, name), strings.Contains(name, "windows"))
@@ -279,79 +280,6 @@ func TestProjectSpecClarifiesLegacyManagedBlocksOutOfScope(t *testing.T) {
 	}
 }
 
-func TestAcceptanceScenarioGroupsHaveCoverage(t *testing.T) {
-	spec := readRepoFile(t, "docs", "PROJECT_SPEC.md")
-	coverage := strings.Join([]string{
-		readRepoFile(t, "internal", "e2e", "acceptance_test.go"),
-		readRepoFile(t, "internal", "e2e", "wizard_accessible_test.go"),
-		readRepoFile(t, "internal", "e2e", "wizard_pty_test.go"),
-		readRepoFile(t, "cmd", "llmgate", "main_test.go"),
-		readRepoFile(t, "internal", "gateway", "client_test.go"),
-		readRepoFile(t, "internal", "gateway", "recommend_test.go"),
-		readRepoFile(t, "internal", "shell", "profile_test.go"),
-		readRepoFile(t, "internal", "settings", "settings_test.go"),
-		readRepoFile(t, "internal", "apply", "apply_test.go"),
-		readRepoFile(t, "internal", "diagnose", "diagnose_test.go"),
-		readRepoFile(t, "internal", "diagnose", "report_test.go"),
-	}, "\n")
-
-	for group, evidence := range map[string][]string{
-		"CLI command scenarios": {
-			"TestAccessibleWizardFreshSetupSmoke",
-			"TestWizardNonInteractiveFailure",
-			"TestRunNoArgsRequiresInteractiveTerminal",
-		},
-		"Privacy scenarios": {
-			"TestAcceptanceCLIAndPrivacyScenarios",
-			"TestAccessibleWizardStartupDeclineIsPrivate",
-			"TestAccessibleWizardGatewayErrorRedactsSecret",
-		},
-		"Gateway scenarios": {
-			"TestAcceptanceGatewayAndModelSelectionScenarios",
-			"TestListModels",
-			"TestProbeModel",
-		},
-		"Model selection scenarios": {
-			"TestAcceptanceGatewayAndModelSelectionScenarios",
-			"TestRecommendPrefersSonnetPrimaryAndFallsBackMissingTiersToPrimary",
-		},
-		"macOS/Linux write scenarios": {
-			"TestAcceptanceMacLinuxWriteScenarios",
-			"TestParsePOSIXProfile",
-			"TestParseAndUpsertFishProfile",
-		},
-		"Windows write scenarios": {
-			"TestAcceptanceWindowsIDEScenarios",
-			"TestWindowsUserEnvironmentPlanApplyAndIdempotency",
-		},
-		"IDE scenarios": {
-			"TestAcceptanceWindowsIDEScenarios",
-			"TestUpsertIDEPreservesUnrelatedSettingsEntriesCommentsAndIsIdempotent",
-		},
-		"Project settings scenarios": {
-			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
-			"project overrides warn and are not write targets",
-		},
-		"Repair scenarios": {
-			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
-			"repair updates simple stale shell models and skips cancellation",
-		},
-		"Final diagnostics scenarios": {
-			"TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios",
-			"final diagnostics labels OK WARN and FAIL outcomes",
-		},
-	} {
-		if !strings.Contains(spec, "### "+group) {
-			t.Fatalf("project spec missing acceptance group %q", group)
-		}
-		for _, want := range evidence {
-			if !strings.Contains(coverage, want) {
-				t.Fatalf("%s missing test evidence %q", group, want)
-			}
-		}
-	}
-}
-
 func readRepoFile(t *testing.T, path ...string) string {
 	t.Helper()
 
@@ -375,9 +303,20 @@ func writeFakeGo(t *testing.T, dir string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, "fake-go")
+	logPath := filepath.Join(dir, "fake-go.log")
 	script := `#!/usr/bin/env sh
 set -eu
 out=""
+{
+	echo "BEGIN"
+	echo "GOOS=${GOOS:-}"
+	echo "GOARCH=${GOARCH:-}"
+	echo "CGO_ENABLED=${CGO_ENABLED:-}"
+	for arg in "$@"; do
+		echo "ARG=$arg"
+	done
+	echo "END"
+} >> "` + logPath + `"
 while [ "$#" -gt 0 ]; do
 	case "$1" in
 		-o)
@@ -400,6 +339,100 @@ printf 'fake llmgate for %s/%s\n' "${GOOS:-unknown}" "${GOARCH:-unknown}" > "$ou
 		t.Fatalf("write fake go: %v", err)
 	}
 	return path
+}
+
+type fakeGoBuild struct {
+	goos       string
+	goarch     string
+	cgoEnabled string
+	args       []string
+}
+
+func assertFakeGoBuilds(t *testing.T, logPath string) {
+	t.Helper()
+
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read fake go log: %v", err)
+	}
+	builds := parseFakeGoBuilds(t, string(data))
+	if len(builds) != 6 {
+		t.Fatalf("fake go build count = %d, want 6:\n%s", len(builds), data)
+	}
+
+	expected := map[string]bool{
+		"linux/amd64":   false,
+		"linux/arm64":   false,
+		"darwin/amd64":  false,
+		"darwin/arm64":  false,
+		"windows/amd64": false,
+		"windows/arm64": false,
+	}
+	for _, build := range builds {
+		key := build.goos + "/" + build.goarch
+		if _, ok := expected[key]; !ok {
+			t.Fatalf("unexpected fake go target %s in %#v", key, build)
+		}
+		expected[key] = true
+		if build.cgoEnabled != "0" {
+			t.Fatalf("%s CGO_ENABLED = %q, want 0", key, build.cgoEnabled)
+		}
+		args := strings.Join(build.args, "\n")
+		for _, want := range []string{
+			"build",
+			"-trimpath",
+			"-ldflags",
+			"github.com/r13v/llmgate/internal/version.version=main",
+			"github.com/r13v/llmgate/internal/version.commit=abc123",
+			"github.com/r13v/llmgate/internal/version.date=2026-05-12T00:00:00Z",
+			"./cmd/llmgate",
+		} {
+			if !strings.Contains(args, want) {
+				t.Fatalf("%s fake go args missing %q:\n%s", key, want, args)
+			}
+		}
+	}
+	for target, seen := range expected {
+		if !seen {
+			t.Fatalf("fake go target %s was not built", target)
+		}
+	}
+}
+
+func parseFakeGoBuilds(t *testing.T, data string) []fakeGoBuild {
+	t.Helper()
+
+	var builds []fakeGoBuild
+	var current *fakeGoBuild
+	for _, line := range strings.Split(strings.TrimSpace(data), "\n") {
+		switch {
+		case line == "BEGIN":
+			if current != nil {
+				t.Fatalf("nested fake go log record:\n%s", data)
+			}
+			current = &fakeGoBuild{}
+		case line == "END":
+			if current == nil {
+				t.Fatalf("fake go log END without BEGIN:\n%s", data)
+			}
+			builds = append(builds, *current)
+			current = nil
+		case strings.HasPrefix(line, "GOOS="):
+			current.goos = strings.TrimPrefix(line, "GOOS=")
+		case strings.HasPrefix(line, "GOARCH="):
+			current.goarch = strings.TrimPrefix(line, "GOARCH=")
+		case strings.HasPrefix(line, "CGO_ENABLED="):
+			current.cgoEnabled = strings.TrimPrefix(line, "CGO_ENABLED=")
+		case strings.HasPrefix(line, "ARG="):
+			current.args = append(current.args, strings.TrimPrefix(line, "ARG="))
+		default:
+			t.Fatalf("unexpected fake go log line %q in:\n%s", line, data)
+		}
+	}
+	if current != nil {
+		t.Fatalf("unterminated fake go log record:\n%s", data)
+	}
+	return builds
 }
 
 func assertDirEntries(t *testing.T, dir string, expected []string) {

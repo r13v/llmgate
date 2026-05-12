@@ -215,13 +215,13 @@
 - Create: `internal/diagnose/diagnose_test.go`
 - Create: `internal/diagnose/report_test.go`
 
-- [ ] Implement diagnostic sections for Claude Code CLI, Claude Code Config, Config Source Conflicts, Runtime Environment, Config Sources, Project Overrides, Gateway contexts, Models, Model Probes, IDE Config, Project Config Validation, IDE Config Validation, and Write Targets.
-- [ ] Validate current and persisted gateway contexts, downgrading failures to `WARN` when another context is usable.
-- [ ] Validate project and IDE gateway/model contexts separately when network checks are enabled.
-- [ ] Render stable copy-paste diagnostic reports with redacted secrets and shortened home paths.
-- [ ] Implement repairable stale shell model warning detection.
-- [ ] Add tests covering OK, SKIP, WARN, FAIL aggregation, multi-context gateway behavior, source issue severities, report format, and redaction.
-- [ ] Run focused diagnostics tests.
+- [x] Implement diagnostic sections for Claude Code CLI, Claude Code Config, Config Source Conflicts, Runtime Environment, Config Sources, Project Overrides, Gateway contexts, Models, Model Probes, IDE Config, Project Config Validation, IDE Config Validation, and Write Targets.
+- [x] Validate current and persisted gateway contexts, downgrading failures to `WARN` when another context is usable.
+- [x] Validate project and IDE gateway/model contexts separately when network checks are enabled.
+- [x] Render stable copy-paste diagnostic reports with redacted secrets and shortened home paths.
+- [x] Implement repairable stale shell model warning detection.
+- [x] Add tests covering OK, SKIP, WARN, FAIL aggregation, multi-context gateway behavior, source issue severities, report format, and redaction.
+- [x] Run focused diagnostics tests.
 
 ### Task 9: Apply Plan and Writers
 **Files:**

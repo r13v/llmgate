@@ -1,0 +1,77 @@
+name: Release main
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Rolling main prerelease
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.3"
+          cache: true
+
+      - name: Install packaging tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      - name: Validate
+        run: make check
+
+      - name: Package release assets
+        env:
+          VERSION: main
+          COMMIT: ${{ github.sha }}
+          DATE: ${{ github.event.head_commit.timestamp }}
+        run: make package
+
+      - name: Write release notes
+        env:
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "Rolling main prerelease for commit ${COMMIT_SHA}."
+            echo
+            echo "Assets are replaced on every push to main."
+            echo "Download checksums.txt and verify the SHA-256 digest before installing."
+          } > "$RUNNER_TEMP/main-release-notes.md"
+
+      - name: Publish rolling prerelease
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view main >/dev/null 2>&1; then
+            gh release edit main \
+              --title "main" \
+              --notes-file "$RUNNER_TEMP/main-release-notes.md" \
+              --prerelease \
+              --latest=false \
+              --target "${GITHUB_SHA}"
+            gh release upload main dist/* --clobber
+          else
+            gh release create main dist/* \
+              --title "main" \
+              --notes-file "$RUNNER_TEMP/main-release-notes.md" \
+              --prerelease \
+              --latest=false \
+              --target "${GITHUB_SHA}"
+          fi

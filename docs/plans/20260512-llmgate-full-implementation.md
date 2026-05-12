@@ -299,15 +299,15 @@
 - Modify: `Makefile`
 - Modify: `README.md`
 
-- [ ] Add release workflow on push to `main`.
-- [ ] Run `make check` before publishing release assets.
-- [ ] Build six targets: `linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`, `windows-arm64`.
-- [ ] Set ldflags for `version=main`, commit SHA, and build date.
-- [ ] Package Unix targets as `.tar.gz` and Windows targets as `.zip`, including binary, `README.md`, and `LICENSE`.
-- [ ] Generate `checksums.txt` with SHA-256 for all archives.
-- [ ] Publish or update a rolling prerelease named/tagged `main` using `gh release` and `GITHUB_TOKEN`.
-- [ ] Include commit SHA in artifact names or release notes.
-- [ ] Add package script tests or dry-run checks where practical.
+- [x] Add release workflow on push to `main`.
+- [x] Run `make check` before publishing release assets.
+- [x] Build six targets: `linux-amd64`, `linux-arm64`, `darwin-amd64`, `darwin-arm64`, `windows-amd64`, `windows-arm64`.
+- [x] Set ldflags for `version=main`, commit SHA, and build date.
+- [x] Package Unix targets as `.tar.gz` and Windows targets as `.zip`, including binary, `README.md`, and `LICENSE`.
+- [x] Generate `checksums.txt` with SHA-256 for all archives.
+- [x] Publish or update a rolling prerelease named/tagged `main` using `gh release` and `GITHUB_TOKEN`.
+- [x] Include commit SHA in artifact names or release notes.
+- [x] Add package script tests or dry-run checks where practical.
 
 ### Task 14: Install Scripts
 **Files:**

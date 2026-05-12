@@ -48,6 +48,24 @@ Installer checks are wired to activate when the release install scripts exist:
 Linux runs `shellcheck scripts/install.sh`, and Windows runs a PowerShell
 `scripts/install.ps1 -DryRun` smoke check.
 
+## Rolling Main Release
+
+Every push to `main` runs `make check`, builds `llmgate` for Linux, macOS, and
+Windows on amd64 and arm64, and publishes a rolling prerelease named `main`.
+
+Release archives are replaced in place:
+
+- `llmgate-main-linux-amd64.tar.gz`
+- `llmgate-main-linux-arm64.tar.gz`
+- `llmgate-main-darwin-amd64.tar.gz`
+- `llmgate-main-darwin-arm64.tar.gz`
+- `llmgate-main-windows-amd64.zip`
+- `llmgate-main-windows-arm64.zip`
+
+Each archive contains the `llmgate` binary, `README.md`, and `LICENSE`.
+`checksums.txt` contains SHA-256 digests for all archives. Release notes include
+the commit SHA used for the rolling build.
+
 ## Development
 
 The project uses Go `1.26.3`.

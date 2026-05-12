@@ -213,12 +213,6 @@ Fish output format:
 set -x NAME 'value'
 ```
 
-Legacy managed blocks:
-
-- recognize historical managed block markers such as `# >>> llmgate >>>` and older gateway-related names;
-- warn that a legacy managed block exists;
-- setup should migrate to ordinary shell assignments instead of preserving block markers.
-
 ### Windows user environment
 
 Requirements:
@@ -406,8 +400,7 @@ Must cover:
 
 - persisted sources with differing values;
 - duplicate active shell values;
-- dynamic or complex shell assignments;
-- legacy managed blocks.
+- dynamic or complex shell assignments.
 
 ### Runtime Environment
 
@@ -966,8 +959,7 @@ Requirements:
 - preserve unrelated variables and unrelated content;
 - leave dynamic or complex assignments unchanged and warn;
 - append missing simple assignments at end for normal setup;
-- do not append missing values during repair-warnings mode;
-- remove legacy managed block marker lines during migration to plain assignments.
+- do not append missing values during repair-warnings mode.
 
 Examples of dynamic or complex assignments that must not be changed automatically:
 
@@ -1125,7 +1117,6 @@ An implementation is behaviorally equivalent when these scenarios pass on suppor
 - Idempotent rerun does not rewrite files and does not create backups.
 - Malformed Claude user settings blocks overwriting that file.
 - Dynamic shell assignment is preserved and warned about.
-- Legacy managed block markers are migrated away.
 
 ### Windows write scenarios
 

@@ -122,6 +122,34 @@ func TestModelPromptsRedactTokensInGatewayModelIDs(t *testing.T) {
 	assertContains(t, renderedPrompts, "sk-...7890")
 }
 
+func TestCredentialPromptRedactsAndCanonicalizesExistingBaseURL(t *testing.T) {
+	token := "sk-goodtoken1234567890"
+	rawBaseURL := "https://" + token + "@gateway.example.com/proxy/v1/models?api_key=" + token + "#fragment"
+	prompts := &credentialPrompter{confirmResponses: []bool{true}}
+
+	gotToken, gotBaseURL, err := promptCredentials(context.Background(), prompts, credentialDefaults{
+		Token:       token,
+		TokenFound:  true,
+		TokenSource: core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"},
+		BaseURL:     rawBaseURL,
+		BaseSource:  core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"},
+	}, displayOptions{HomeDir: "/home/ada", GOOS: "linux"})
+	if err != nil {
+		t.Fatalf("promptCredentials() error = %v", err)
+	}
+	if gotToken != token {
+		t.Fatalf("token = %q, want existing token", gotToken)
+	}
+	if gotBaseURL != "https://gateway.example.com/proxy/v1" {
+		t.Fatalf("base URL = %q, want canonical URL", gotBaseURL)
+	}
+
+	renderedPrompts := strings.Join(prompts.descriptions, "\n") + "\n" + strings.Join(prompts.inputDefaults, "\n")
+	assertNotContains(t, renderedPrompts, token)
+	assertNotContains(t, renderedPrompts, rawBaseURL)
+	assertContains(t, renderedPrompts, "https://gateway.example.com/proxy/v1")
+}
+
 func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	var output bytes.Buffer
 	token := "plain-secret-token"
@@ -196,6 +224,40 @@ func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {
 		t.Fatalf("apply plan rendered %d time(s), want rejected plan to return to targets\n%s", got, output.String())
 	}
 	assertFileContains(t, fileSystem, "/home/ada/.claude/settings.json", "sk-goodtoken1234567890")
+}
+
+func TestSetupPersistsCanonicalGatewayBaseURL(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	fileSystem := newWizardFileSystem()
+	rawBaseURL := server.URL + "/v1/models?ignored=1#fragment"
+	prompts := &scriptedPrompter{responses: []promptResponse{
+		{kind: "confirm", confirm: true},
+		{kind: "select", value: string(actionSetup)},
+		{kind: "input", value: "sk-goodtoken1234567890"},
+		{kind: "input", value: rawBaseURL},
+		{kind: "confirm", confirm: true},
+		{kind: "multiselect", values: []string{"0", "1"}},
+		{kind: "confirm", confirm: true},
+	}}
+	var output bytes.Buffer
+
+	err := Run(context.Background(), Options{
+		System:   testSystem(fileSystem, map[string]string{"SHELL": "/bin/zsh"}),
+		Gateway:  testGateway(server),
+		Prompter: prompts,
+		Output:   &output,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output.String())
+	}
+
+	settings := string(fileSystem.files["/home/ada/.claude/settings.json"])
+	assertContains(t, settings, server.URL+`/v1"`)
+	assertNotContains(t, settings, rawBaseURL)
+	assertNotContains(t, settings, "ignored=1")
+	assertFileContains(t, fileSystem, "/home/ada/.zshrc", "ANTHROPIC_BASE_URL='"+server.URL+"/v1'")
 }
 
 func TestScriptedPromptCancellationsExitBeforeWrites(t *testing.T) {
@@ -533,6 +595,12 @@ type recordingPrompter struct {
 	optionLabels     []string
 }
 
+type credentialPrompter struct {
+	confirmResponses []bool
+	descriptions     []string
+	inputDefaults    []string
+}
+
 func (p *recordingPrompter) Confirm(_ context.Context, prompt ConfirmPrompt) (bool, error) {
 	p.descriptions = append(p.descriptions, prompt.Description)
 	if len(p.confirmResponses) == 0 {
@@ -561,6 +629,30 @@ func (p *recordingPrompter) Select(_ context.Context, prompt SelectPrompt) (stri
 }
 
 func (p *recordingPrompter) MultiSelect(context.Context, MultiSelectPrompt) ([]string, error) {
+	return nil, errors.New("unexpected multiselect prompt")
+}
+
+func (p *credentialPrompter) Confirm(_ context.Context, prompt ConfirmPrompt) (bool, error) {
+	p.descriptions = append(p.descriptions, prompt.Description)
+	if len(p.confirmResponses) == 0 {
+		return false, errors.New("unexpected confirm prompt")
+	}
+	value := p.confirmResponses[0]
+	p.confirmResponses = p.confirmResponses[1:]
+	return value, nil
+}
+
+func (p *credentialPrompter) Input(_ context.Context, prompt InputPrompt) (string, error) {
+	p.descriptions = append(p.descriptions, prompt.Description)
+	p.inputDefaults = append(p.inputDefaults, prompt.Default)
+	return prompt.Default, nil
+}
+
+func (p *credentialPrompter) Select(context.Context, SelectPrompt) (string, error) {
+	return "", errors.New("unexpected select prompt")
+}
+
+func (p *credentialPrompter) MultiSelect(context.Context, MultiSelectPrompt) ([]string, error) {
 	return nil, errors.New("unexpected multiselect prompt")
 }
 

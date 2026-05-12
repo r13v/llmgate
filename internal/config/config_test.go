@@ -203,6 +203,35 @@ func TestReadReportsMalformedSourceSeverity(t *testing.T) {
 	}
 }
 
+func TestReadReportsPathInspectionErrorsAsSourceIssues(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	fileSystem.addDir("/home/ada/.config/Code/User")
+	fileSystem.statErrs = map[string]error{
+		"/home/ada/.claude/settings.json":               fs.ErrPermission,
+		"/home/ada/.zshrc":                              fs.ErrPermission,
+		"/home/ada/.config/Code/User/settings.json":     fs.ErrPermission,
+		"/home/ada/project/.claude/settings.local.json": fs.ErrPermission,
+	}
+
+	read, err := Read(testSystem(fileSystem, "linux", "/home/ada", "/home/ada/project", map[string]string{
+		"SHELL": "/bin/zsh",
+	}), true)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	got := issueStatuses(read.SourceIssues)
+	want := map[core.SourceKind]core.DiagnosticStatus{
+		core.SourceClaudeUserSettings:   core.StatusFAIL,
+		core.SourceShellProfile:         core.StatusFAIL,
+		core.SourceVSCodeSettings:       core.StatusWARN,
+		core.SourceProjectLocalSettings: core.StatusWARN,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("issue statuses = %v, want %v; issues: %#v", got, want, read.SourceIssues)
+	}
+}
+
 func testSystem(fileSystem *testFileSystem, targetOS, home, work string, env map[string]string) system.System {
 	return system.System{
 		FS:       fileSystem,
@@ -271,11 +300,12 @@ func issueStatuses(issues []SourceIssue) map[core.SourceKind]core.DiagnosticStat
 }
 
 type testFileSystem struct {
-	files  map[string][]byte
-	dirs   map[string]bool
-	reads  []string
-	stats  []string
-	writes int
+	files    map[string][]byte
+	dirs     map[string]bool
+	statErrs map[string]error
+	reads    []string
+	stats    []string
+	writes   int
 }
 
 func newTestFileSystem() *testFileSystem {
@@ -318,6 +348,9 @@ func (f *testFileSystem) MkdirAll(string, fs.FileMode) error {
 
 func (f *testFileSystem) Stat(name string) (fs.FileInfo, error) {
 	f.stats = append(f.stats, name)
+	if err := f.statErrs[name]; err != nil {
+		return nil, err
+	}
 	if f.dirs[name] {
 		return testFileInfo{name: name, dir: true}, nil
 	}

@@ -396,6 +396,41 @@ func TestWindowsUserEnvironmentPlanApplyAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestWindowsUserEnvironmentApplyRejectsStalePlan(t *testing.T) {
+	values := testSetupValues()
+	windowsEnv := &testWindowsEnvironment{values: map[string]string{
+		core.VarAnthropicAuthToken: "sk-oldwindows1234",
+	}}
+	target := core.WriteTarget{
+		Kind:      core.WriteTargetWindowsUserEnv,
+		Title:     core.WriteTargetTitle(core.WriteTargetWindowsUserEnv),
+		Sensitive: true,
+		Writable:  true,
+		Exists:    true,
+	}
+	paths := system.DiscoveredPaths{GOOS: "windows", HomeDir: `C:\Users\Ada`}
+
+	plan, err := BuildSetupPlan(system.System{WindowsEnv: windowsEnv}, paths, []core.WriteTarget{target}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	windowsEnv.values[core.VarAnthropicAuthToken] = "sk-newerwindows1234"
+
+	result, err := Apply(system.System{WindowsEnv: windowsEnv}, plan, ApplyOptions{})
+	if err == nil {
+		t.Fatalf("Apply() error = nil, want stale-plan error")
+	}
+	if len(result.Targets) != 1 || result.Targets[0].Status != ResultFailed {
+		t.Fatalf("failed result = %#v, want one failed target", result)
+	}
+	if windowsEnv.values[core.VarAnthropicAuthToken] != "sk-newerwindows1234" {
+		t.Fatalf("Windows token was overwritten despite stale plan")
+	}
+	if len(windowsEnv.sets) != 0 {
+		t.Fatalf("Windows Set called despite stale plan: %v", windowsEnv.sets)
+	}
+}
+
 func TestApplyFailureStopsAndReportsFailedTarget(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	fileSystem.writeErr = errors.New("disk full")

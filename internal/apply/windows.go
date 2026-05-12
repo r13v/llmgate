@@ -33,6 +33,11 @@ func applyWindowsTarget(windowsEnv system.WindowsUserEnvironment, target TargetP
 	if windowsEnv == nil {
 		windowsEnv = system.NewWindowsUserEnvironment()
 	}
+	if err := verifyWindowsTargetUnchanged(windowsEnv, target); err != nil {
+		result.Status = ResultFailed
+		result.Error = err.Error()
+		return result, err
+	}
 	for _, change := range target.Changes {
 		if !change.New.Set {
 			continue
@@ -46,4 +51,25 @@ func applyWindowsTarget(windowsEnv system.WindowsUserEnvironment, target TargetP
 	result.Status = ResultWritten
 	result.Changed = len(target.Changes) > 0
 	return result, nil
+}
+
+func verifyWindowsTargetUnchanged(windowsEnv system.WindowsUserEnvironment, target TargetPlan) error {
+	names := make([]string, 0, len(target.Changes))
+	for _, change := range target.Changes {
+		names = append(names, change.Name)
+	}
+	current, err := windowsEnv.Snapshot(names)
+	if err != nil {
+		return fmt.Errorf("verify Windows user environment before writing: %w", err)
+	}
+	for _, change := range target.Changes {
+		value, ok := current[change.Name]
+		if ok != change.Old.Set {
+			return fmt.Errorf("%s changed after the apply plan was built: %s", target.Target.Title, change.Name)
+		}
+		if ok && value != change.Old.Value {
+			return fmt.Errorf("%s changed after the apply plan was built: %s", target.Target.Title, change.Name)
+		}
+	}
+	return nil
 }

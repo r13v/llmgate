@@ -40,6 +40,7 @@ type RequestOptions struct {
 
 type ModelListResult struct {
 	Models       []string
+	BaseURL      string
 	URL          string
 	FallbackURL  string
 	FallbackUsed bool
@@ -189,10 +190,12 @@ func (c Client) listModelsUncached(ctx context.Context, modelURLs ModelURLs, tok
 			return ModelListResult{}, requestError("model list", modelURLs.Fallback, token, fallbackErr)
 		}
 		result, modelErr := handleModelListResponse(fallbackStatus, fallbackBody, token, modelURLs.Fallback, true)
+		result.BaseURL = modelURLs.Base
 		result.FallbackURL = modelURLs.Fallback
 		return result, modelErr
 	}
 	result, modelErr := handleModelListResponse(status, body, token, modelURLs.Primary, false)
+	result.BaseURL = modelURLs.Base
 	result.FallbackURL = modelURLs.Fallback
 	return result, modelErr
 }

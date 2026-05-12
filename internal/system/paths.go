@@ -45,6 +45,12 @@ type IDETarget struct {
 	FileExists   bool
 }
 
+type PathIssue struct {
+	Source  core.SourceLabel
+	Status  core.DiagnosticStatus
+	Summary string
+}
+
 type DiscoveredPaths struct {
 	GOOS                 string
 	HomeDir              string
@@ -59,6 +65,7 @@ type DiscoveredPaths struct {
 	ProjectLocalExists   bool
 	ProjectSettings      string
 	ProjectExists        bool
+	PathIssues           []PathIssue
 	WriteTargets         []core.WriteTarget
 }
 
@@ -75,37 +82,20 @@ func DetectPaths(fileSystem FileSystem, options PathOptions) (DiscoveredPaths, e
 		return DiscoveredPaths{}, fmt.Errorf("working directory is required")
 	}
 
+	var pathIssues []PathIssue
 	claudeUserSettings := joinPath(targetOS, options.HomeDir, ".claude", "settings.json")
-	claudeExists, _, err := statPath(fileSystem, claudeUserSettings)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
+	claudeExists, _ := statSourcePath(fileSystem, claudeUserSettings, core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: claudeUserSettings}, core.StatusFAIL, "inspect Claude Code user settings", &pathIssues)
 
 	projectLocalSettings := joinPath(targetOS, options.WorkingDir, ".claude", "settings.local.json")
-	projectLocalExists, _, err := statPath(fileSystem, projectLocalSettings)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
+	projectLocalExists, _ := statSourcePath(fileSystem, projectLocalSettings, core.SourceLabel{Kind: core.SourceProjectLocalSettings, Path: projectLocalSettings}, core.StatusWARN, "inspect project local settings", &pathIssues)
 
 	projectSettings := joinPath(targetOS, options.WorkingDir, ".claude", "settings.json")
-	projectExists, _, err := statPath(fileSystem, projectSettings)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
+	projectExists, _ := statSourcePath(fileSystem, projectSettings, core.SourceLabel{Kind: core.SourceProjectSettings, Path: projectSettings}, core.StatusWARN, "inspect project settings", &pathIssues)
 
-	shellProfile, err := detectShellProfile(fileSystem, targetOS, options.HomeDir, options.Shell)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
+	shellProfile := detectShellProfile(fileSystem, targetOS, options.HomeDir, options.Shell, &pathIssues)
 
-	vsCode, err := detectIDETarget(fileSystem, targetOS, options.HomeDir, options.AppData, core.WriteTargetVSCode)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
-	cursor, err := detectIDETarget(fileSystem, targetOS, options.HomeDir, options.AppData, core.WriteTargetCursor)
-	if err != nil {
-		return DiscoveredPaths{}, err
-	}
+	vsCode := detectIDETarget(fileSystem, targetOS, options.HomeDir, options.AppData, core.WriteTargetVSCode, &pathIssues)
+	cursor := detectIDETarget(fileSystem, targetOS, options.HomeDir, options.AppData, core.WriteTargetCursor, &pathIssues)
 
 	discovered := DiscoveredPaths{
 		GOOS:                 targetOS,
@@ -121,6 +111,7 @@ func DetectPaths(fileSystem FileSystem, options PathOptions) (DiscoveredPaths, e
 		ProjectLocalExists:   projectLocalExists,
 		ProjectSettings:      projectSettings,
 		ProjectExists:        projectExists,
+		PathIssues:           pathIssues,
 	}
 	discovered.WriteTargets = buildWriteTargets(discovered)
 	return discovered, nil
@@ -186,54 +177,48 @@ func ideWriteTarget(target IDETarget) core.WriteTarget {
 	}
 }
 
-func detectShellProfile(fileSystem FileSystem, targetOS, homeDir, shell string) (ShellProfile, error) {
+func detectShellProfile(fileSystem FileSystem, targetOS, homeDir, shell string, issues *[]PathIssue) ShellProfile {
 	if targetOS == "windows" {
-		return ShellProfile{}, nil
+		return ShellProfile{}
 	}
 	if targetOS != "darwin" && targetOS != "linux" {
-		return ShellProfile{Kind: ShellUnknown}, nil
+		return ShellProfile{Kind: ShellUnknown}
 	}
 
 	kind := shellKind(shell)
 	switch kind {
 	case ShellZsh:
-		return shellProfile(fileSystem, targetOS, homeDir, kind, ".zshrc")
+		return shellProfile(fileSystem, targetOS, homeDir, kind, issues, ".zshrc")
 	case ShellFish:
-		return shellProfile(fileSystem, targetOS, homeDir, kind, ".config", "fish", "config.fish")
+		return shellProfile(fileSystem, targetOS, homeDir, kind, issues, ".config", "fish", "config.fish")
 	case ShellBash:
 		if targetOS == "darwin" {
 			bashProfilePath := joinPath(targetOS, homeDir, ".bash_profile")
-			exists, isDir, err := statPath(fileSystem, bashProfilePath)
-			if err != nil {
-				return ShellProfile{}, err
-			}
+			exists, isDir := statSourcePath(fileSystem, bashProfilePath, shellSourceLabel(bashProfilePath), core.StatusFAIL, "inspect shell profile", issues)
 			if exists && !isDir {
-				return ShellProfile{Kind: kind, Path: bashProfilePath, Detected: true, Exists: true}, nil
+				return ShellProfile{Kind: kind, Path: bashProfilePath, Detected: true, Exists: true}
 			}
 		}
-		return shellProfile(fileSystem, targetOS, homeDir, kind, ".bashrc")
+		return shellProfile(fileSystem, targetOS, homeDir, kind, issues, ".bashrc")
 	case ShellNone:
-		return ShellProfile{Kind: ShellNone}, nil
+		return ShellProfile{Kind: ShellNone}
 	default:
-		return ShellProfile{Kind: ShellUnknown}, nil
+		return ShellProfile{Kind: ShellUnknown}
 	}
 }
 
-func shellProfile(fileSystem FileSystem, targetOS, homeDir string, kind ShellKind, elements ...string) (ShellProfile, error) {
+func shellProfile(fileSystem FileSystem, targetOS, homeDir string, kind ShellKind, issues *[]PathIssue, elements ...string) ShellProfile {
 	profilePath := joinPath(append([]string{targetOS, homeDir}, elements...)...)
-	exists, _, err := statPath(fileSystem, profilePath)
-	if err != nil {
-		return ShellProfile{}, err
-	}
+	exists, _ := statSourcePath(fileSystem, profilePath, shellSourceLabel(profilePath), core.StatusFAIL, "inspect shell profile", issues)
 	return ShellProfile{
 		Kind:     kind,
 		Path:     profilePath,
 		Detected: true,
 		Exists:   exists,
-	}, nil
+	}
 }
 
-func detectIDETarget(fileSystem FileSystem, targetOS, homeDir, appData string, kind core.WriteTargetKind) (IDETarget, error) {
+func detectIDETarget(fileSystem FileSystem, targetOS, homeDir, appData string, kind core.WriteTargetKind, issues *[]PathIssue) IDETarget {
 	settingsDir, settingsPath := idePaths(targetOS, homeDir, appData, kind)
 	target := IDETarget{
 		Kind:         kind,
@@ -242,24 +227,19 @@ func detectIDETarget(fileSystem FileSystem, targetOS, homeDir, appData string, k
 		SettingsPath: settingsPath,
 	}
 	if settingsDir == "" {
-		return target, nil
+		return target
 	}
 
-	dirExists, isDir, err := statPath(fileSystem, settingsDir)
-	if err != nil {
-		return IDETarget{}, err
-	}
+	source := ideSourceLabel(kind, settingsPath)
+	dirExists, isDir := statSourcePath(fileSystem, settingsDir, source, core.StatusWARN, "inspect "+target.Title+" settings directory", issues)
 	target.DirExists = dirExists && isDir
 	if !target.DirExists {
-		return target, nil
+		return target
 	}
 
-	fileExists, _, err := statPath(fileSystem, settingsPath)
-	if err != nil {
-		return IDETarget{}, err
-	}
+	fileExists, _ := statSourcePath(fileSystem, settingsPath, source, core.StatusWARN, "inspect "+target.Title+" settings", issues)
 	target.FileExists = fileExists
-	return target, nil
+	return target
 }
 
 func idePaths(targetOS, homeDir, appData string, kind core.WriteTargetKind) (string, string) {
@@ -323,6 +303,36 @@ func statPath(fileSystem FileSystem, name string) (bool, bool, error) {
 		return false, false, err
 	}
 	return true, info.IsDir(), nil
+}
+
+func statSourcePath(fileSystem FileSystem, name string, source core.SourceLabel, status core.DiagnosticStatus, action string, issues *[]PathIssue) (bool, bool) {
+	exists, isDir, err := statPath(fileSystem, name)
+	if err == nil {
+		return exists, isDir
+	}
+	if issues != nil {
+		*issues = append(*issues, PathIssue{
+			Source:  source,
+			Status:  status,
+			Summary: fmt.Sprintf("%s: %s", action, err),
+		})
+	}
+	return false, false
+}
+
+func shellSourceLabel(path string) core.SourceLabel {
+	return core.SourceLabel{Kind: core.SourceShellProfile, Path: path}
+}
+
+func ideSourceLabel(kind core.WriteTargetKind, path string) core.SourceLabel {
+	switch kind {
+	case core.WriteTargetVSCode:
+		return core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: path}
+	case core.WriteTargetCursor:
+		return core.SourceLabel{Kind: core.SourceCursorSettings, Path: path}
+	default:
+		return core.SourceLabel{Kind: core.SourceUnknown, Path: path}
+	}
 }
 
 func effectiveGOOS(targetOS string) string {

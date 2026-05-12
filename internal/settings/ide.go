@@ -20,14 +20,21 @@ func ParseIDE(data []byte) (IDE, error) {
 	}
 
 	parsed := IDE{Environment: make(map[string]string)}
-	if member := firstObjectMember(root, ideSelectedModelKey); member != nil {
+	member, err := singleObjectMember(root, ideSelectedModelKey, "IDE")
+	if err != nil {
+		return IDE{}, err
+	}
+	if member != nil {
 		if model, ok := stringValue(member.Value); ok {
 			parsed.SelectedModel = model
 			parsed.HasSelectedModel = true
 		}
 	}
 
-	envMember := firstObjectMember(root, ideEnvironmentKey)
+	envMember, err := singleObjectMember(root, ideEnvironmentKey, "IDE")
+	if err != nil {
+		return IDE{}, err
+	}
 	if envMember == nil {
 		return parsed, nil
 	}
@@ -63,6 +70,9 @@ func UpsertIDE(data []byte, selectedModel string, values map[string]string) ([]b
 		return nil, err
 	}
 
+	if _, err := singleObjectMember(root, ideSelectedModelKey, "IDE"); err != nil {
+		return nil, err
+	}
 	changed := upsertObjectString(root, ideSelectedModelKey, selectedModel)
 
 	envArray, envChanged, err := ensureArrayMember(root, ideEnvironmentKey, "IDE")
@@ -90,7 +100,10 @@ func UpsertIDE(data []byte, selectedModel string, values map[string]string) ([]b
 
 func ensureArrayMember(root *hujson.Object, name, label string) (*hujson.Array, bool, error) {
 	changed := false
-	member := firstObjectMember(root, name)
+	member, err := singleObjectMember(root, name, label)
+	if err != nil {
+		return nil, false, err
+	}
 	if member == nil {
 		member = upsertObjectValue(root, name, newArrayValue())
 		changed = true

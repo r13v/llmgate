@@ -13,6 +13,7 @@ const (
 	fishExportInherit
 	fishExportOn
 	fishExportOff
+	fishErase
 )
 
 func parseFishLine(line string, lineNumber int) []Assignment {
@@ -49,6 +50,12 @@ func parseFishLine(line string, lineNumber int) []Assignment {
 	}
 
 	valueWords := words[nameIndex+1:]
+	if exportMode == fishErase {
+		if len(valueWords) != 0 {
+			return complexAssignments(line, lineNumber, comment, names)
+		}
+		return unexportingStateAssignments(lineNumber, comment, []string{name})
+	}
 	if len(valueWords) != 1 {
 		if exportMode == fishExportOn {
 			return exportedComplexAssignments(line, lineNumber, comment, []string{name})
@@ -84,6 +91,9 @@ func fishNameIndex(words []shellWord) (int, fishExportMode) {
 		}
 		if fishSetOptionUnexports(text) {
 			mode = fishExportOff
+		}
+		if fishSetOptionErases(text) {
+			mode = fishErase
 		}
 	}
 	return -1, mode
@@ -129,4 +139,14 @@ func fishSetOptionUnexports(option string) bool {
 		return false
 	}
 	return strings.Contains(option[1:], "u")
+}
+
+func fishSetOptionErases(option string) bool {
+	if option == "--erase" {
+		return true
+	}
+	if strings.HasPrefix(option, "--") {
+		return false
+	}
+	return strings.Contains(option[1:], "e")
 }

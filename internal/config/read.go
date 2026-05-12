@@ -37,6 +37,7 @@ func Read(sys system.System, approved bool) (ReadResult, error) {
 		Paths:        paths,
 		WriteTargets: append([]core.WriteTarget(nil), paths.WriteTargets...),
 	}
+	appendPathIssues(paths, &result)
 
 	readClaudeUser(fileSystem, paths, &result)
 	readPersistedEnvironment(sys, fileSystem, paths, &result)
@@ -47,6 +48,17 @@ func Read(sys system.System, approved bool) (ReadResult, error) {
 	readProject(fileSystem, paths.ProjectSettings, paths.ProjectExists, core.SourceProjectSettings, &result)
 
 	return result, nil
+}
+
+func appendPathIssues(paths system.DiscoveredPaths, result *ReadResult) {
+	for _, issue := range paths.PathIssues {
+		result.SourceIssues = append(result.SourceIssues, sourceIssue(
+			SourceIssueReadError,
+			issue.Status,
+			issue.Source,
+			issue.Summary,
+		))
+	}
 }
 
 func readClaudeUser(fileSystem system.FileSystem, paths system.DiscoveredPaths, result *ReadResult) {

@@ -116,6 +116,26 @@ func TestParsePOSIXUnexportAndUnsetClearEffectiveValues(t *testing.T) {
 	}
 }
 
+func TestParseFishEraseClearsEffectiveValues(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"set -x ANTHROPIC_AUTH_TOKEN 'sk-exported123456'",
+		"set -e ANTHROPIC_AUTH_TOKEN",
+		"set -x ANTHROPIC_BASE_URL 'https://old.example.com'",
+		"set --erase ANTHROPIC_BASE_URL",
+		"",
+	}, "\n"))
+
+	profile, err := ParseProfile(input, SyntaxFish)
+	if err != nil {
+		t.Fatalf("ParseProfile() error = %v", err)
+	}
+	assertProfileValueMissing(t, profile, core.VarAnthropicAuthToken)
+	assertProfileValueMissing(t, profile, core.VarAnthropicBaseURL)
+	if len(profile.Issues) != 0 {
+		t.Fatalf("Issues = %#v, want none", profile.Issues)
+	}
+}
+
 func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
 	input := []byte(strings.Join([]string{
 		"# shell setup",

@@ -139,6 +139,46 @@ func TestUpdateExistingFileCreatesTimestampedBackupAtomicallyAndIdempotentRerunS
 	}
 }
 
+func TestBuildSetupPlanSkipsSemanticallyUnchangedShellProfile(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	values := testSetupValues()
+	path := "/home/ada/.zshrc"
+	setupValues := values.Map()
+	var lines []string
+	for _, name := range orderedNames(setupValues) {
+		lines = append(lines, "export "+name+"="+setupValues[name])
+	}
+	original := []byte(strings.Join(lines, "\n") + "\n")
+	fileSystem.addFile(path, original, 0o600)
+
+	plan, err := BuildSetupPlan(system.System{FS: fileSystem}, testUnixPaths(true), []core.WriteTarget{
+		writeTarget(core.WriteTargetShellProfile, path, true),
+	}, values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+	if got := plan.Targets[0].Operation; got != OperationNoChanges {
+		t.Fatalf("operation = %s, want %s", got, OperationNoChanges)
+	}
+
+	result, err := Apply(system.System{FS: fileSystem}, plan, ApplyOptions{})
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if result.Targets[0].Status != ResultSkipped {
+		t.Fatalf("result status = %s, want %s", result.Targets[0].Status, ResultSkipped)
+	}
+	if len(fileSystem.writes) != 0 || len(fileSystem.renames) != 0 {
+		t.Fatalf("semantically unchanged apply wrote files: writes=%v renames=%v", fileSystem.writes, fileSystem.renames)
+	}
+	if got := string(fileSystem.files[path]); got != string(original) {
+		t.Fatalf("semantically unchanged profile was rewritten:\n%s", got)
+	}
+	if fileSystem.exists(path + ".llmgate.bak") {
+		t.Fatalf("semantically unchanged profile created backup")
+	}
+}
+
 func TestApplyAbortsWhenExistingTargetChangedAfterPlanBuilt(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	values := testSetupValues()

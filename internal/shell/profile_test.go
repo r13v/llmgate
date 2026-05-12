@@ -89,6 +89,33 @@ func TestParseOnlyExportedShellAssignmentsAreEffective(t *testing.T) {
 	assertIssue(t, fishProfile.Manual, IssueComplex, core.VarAnthropicBaseURL, 2)
 }
 
+func TestParsePOSIXUnexportAndUnsetClearEffectiveValues(t *testing.T) {
+	input := []byte(strings.Join([]string{
+		"export ANTHROPIC_AUTH_TOKEN='sk-exported123456'",
+		"export -n ANTHROPIC_AUTH_TOKEN",
+		"ANTHROPIC_AUTH_TOKEN='sk-local123456'",
+		"export ANTHROPIC_BASE_URL='https://old.example.com'",
+		"unset ANTHROPIC_BASE_URL",
+		"export ANTHROPIC_MODEL='claude-old'",
+		"unset -v ANTHROPIC_MODEL",
+		"export ANTHROPIC_DEFAULT_HAIKU_MODEL='claude-old-haiku'",
+		"export -n ANTHROPIC_DEFAULT_HAIKU_MODEL='claude-local-haiku'",
+		"",
+	}, "\n"))
+
+	profile, err := ParseProfile(input, SyntaxPOSIX)
+	if err != nil {
+		t.Fatalf("ParseProfile() error = %v", err)
+	}
+	assertProfileValueMissing(t, profile, core.VarAnthropicAuthToken)
+	assertProfileValueMissing(t, profile, core.VarAnthropicBaseURL)
+	assertProfileValueMissing(t, profile, core.VarAnthropicModel)
+	assertProfileValueMissing(t, profile, core.VarAnthropicDefaultHaikuModel)
+	if len(profile.Issues) != 0 {
+		t.Fatalf("Issues = %#v, want none", profile.Issues)
+	}
+}
+
 func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
 	input := []byte(strings.Join([]string{
 		"# shell setup",
@@ -129,6 +156,24 @@ func TestUpsertPOSIXUpdatesPreservesAppendsAndIsIdempotent(t *testing.T) {
 	}
 	if string(second) != text {
 		t.Fatalf("UpsertProfile() should be idempotent\nfirst:\n%s\nsecond:\n%s", text, second)
+	}
+}
+
+func TestUpsertPOSIXLeavesSemanticallyEqualAssignmentsUntouched(t *testing.T) {
+	input := []byte("export ANTHROPIC_BASE_URL=https://gateway.example.com\n")
+	values := map[string]string{
+		core.VarAnthropicBaseURL: "https://gateway.example.com",
+	}
+
+	output, result, err := UpsertProfile(input, SyntaxPOSIX, values, ModeSetup)
+	if err != nil {
+		t.Fatalf("UpsertProfile() error = %v", err)
+	}
+	if string(output) != string(input) {
+		t.Fatalf("semantically equal profile was rewritten:\n%s", output)
+	}
+	if result.Changed {
+		t.Fatalf("Changed = true, want false")
 	}
 }
 

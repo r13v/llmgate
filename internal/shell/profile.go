@@ -28,6 +28,7 @@ const (
 	AssignmentSimple  AssignmentKind = "simple"
 	AssignmentDynamic AssignmentKind = "dynamic"
 	AssignmentComplex AssignmentKind = "complex"
+	AssignmentState   AssignmentKind = "state"
 )
 
 type IssueKind string
@@ -105,6 +106,13 @@ func (p *Profile) finish() {
 	exportedByName := make(map[string]bool)
 
 	for _, assignment := range p.Assignments {
+		if assignment.Unexports {
+			delete(simpleByName, assignment.Name)
+			delete(lastByName, assignment.Name)
+			exportedByName[assignment.Name] = false
+			continue
+		}
+
 		effective := assignment.Exports || (assignment.InheritsExport && exportedByName[assignment.Name])
 		switch assignment.Kind {
 		case AssignmentSimple:

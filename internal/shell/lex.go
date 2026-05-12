@@ -185,6 +185,24 @@ func unexportingDynamicAssignment(name string, line int, comment string) Assignm
 	return assignment
 }
 
+func unexportingStateAssignments(lineNumber int, comment string, names []string) []Assignment {
+	names = uniqueStrings(names)
+	assignments := make([]Assignment, 0, len(names))
+	for _, name := range names {
+		if !core.IsManaged(name) {
+			continue
+		}
+		assignments = append(assignments, Assignment{
+			Name:      name,
+			Line:      lineNumber,
+			Kind:      AssignmentState,
+			Comment:   comment,
+			Unexports: true,
+		})
+	}
+	return assignments
+}
+
 func complexAssignments(line string, lineNumber int, comment string, names []string) []Assignment {
 	return complexAssignmentsWithExports(line, lineNumber, comment, names, false)
 }

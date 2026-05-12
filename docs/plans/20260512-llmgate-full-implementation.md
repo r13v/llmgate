@@ -318,13 +318,13 @@
 - Modify: `.github/workflows/release-main.yml`
 - Modify: `README.md`
 
-- [ ] Implement Unix install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, and installs to `/usr/local/bin` or `$HOME/.local/bin`.
-- [ ] Support Unix env overrides: `LLMGATE_INSTALL_DIR`, `LLMGATE_ARCH`, and `LLMGATE_OS`; do not support SemVer version selection.
-- [ ] Implement PowerShell install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, installs to `$env:LOCALAPPDATA\Programs\llmgate\bin`, and optionally adds User PATH via `LLMGATE_ADD_TO_PATH=1`.
-- [ ] Add `-DryRun` or equivalent safe mode for CI smoke tests.
-- [ ] Attach install scripts to the rolling `main` release.
-- [ ] Add shellcheck and PowerShell smoke checks in CI.
-- [ ] Document install commands and rolling release caveat in README.
+- [x] Implement Unix install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, and installs to `/usr/local/bin` or `$HOME/.local/bin`.
+- [x] Support Unix env overrides: `LLMGATE_INSTALL_DIR`, `LLMGATE_ARCH`, and `LLMGATE_OS`; do not support SemVer version selection.
+- [x] Implement PowerShell install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, installs to `$env:LOCALAPPDATA\Programs\llmgate\bin`, and optionally adds User PATH via `LLMGATE_ADD_TO_PATH=1`.
+- [x] Add `-DryRun` or equivalent safe mode for CI smoke tests.
+- [x] Attach install scripts to the rolling `main` release.
+- [x] Add shellcheck and PowerShell smoke checks in CI.
+- [x] Document install commands and rolling release caveat in README.
 
 ### Task 15: Final Documentation and Acceptance Verification
 **Files:**

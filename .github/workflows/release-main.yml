@@ -53,6 +53,7 @@ jobs:
             echo
             echo "Assets are replaced on every push to main."
             echo "Download checksums.txt and verify the SHA-256 digest before installing."
+            echo "Installer scripts are attached as install.sh and install.ps1."
           } > "$RUNNER_TEMP/main-release-notes.md"
 
       - name: Publish rolling prerelease

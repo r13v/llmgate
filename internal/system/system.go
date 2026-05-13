@@ -111,16 +111,6 @@ type WindowsUserEnvironment interface {
 	Set(name, value string) error
 }
 
-type unsupportedWindowsUserEnvironment struct{}
-
-func (unsupportedWindowsUserEnvironment) Snapshot([]string) (map[string]string, error) {
-	return nil, ErrUnsupportedWindowsUserEnvironment
-}
-
-func (unsupportedWindowsUserEnvironment) Set(string, string) error {
-	return ErrUnsupportedWindowsUserEnvironment
-}
-
 type System struct {
 	FS         FileSystem
 	Env        ProcessEnvironment

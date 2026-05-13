@@ -19,6 +19,8 @@ die() {
 	exit 1
 }
 
+# ShellCheck may not model trap-dispatched functions as reachable.
+# shellcheck disable=SC2317,SC2329
 cleanup() {
 	if [ -n "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
@@ -27,7 +29,7 @@ cleanup() {
 		rm -rf "$lock_dir"
 	fi
 }
-trap cleanup EXIT HUP INT TERM
+trap 'cleanup' EXIT HUP INT TERM
 
 resolve_os() {
 	uname_s="$(uname -s 2>/dev/null || true)"

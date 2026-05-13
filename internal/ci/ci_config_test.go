@@ -32,9 +32,9 @@ func TestCIWorkflowMatchesPlan(t *testing.T) {
 		"make lint",
 		"make test",
 		"make test-e2e",
-		"shellcheck scripts/install.sh",
-		"scripts/install.ps1",
-		"-DryRun",
+		"shellcheck scripts/run.sh",
+		"scripts/run.ps1",
+		"[scriptblock]::Create",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("CI workflow missing %q", want)
@@ -94,7 +94,7 @@ func TestReleaseWorkflowMatchesPlan(t *testing.T) {
 		"--prerelease",
 		"--target \"${GITHUB_SHA}\"",
 		"Rolling main prerelease for commit ${COMMIT_SHA}.",
-		"Installer scripts are attached as install.sh and install.ps1.",
+		"Run scripts are attached as run.sh and run.ps1.",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("release workflow missing %q", want)
@@ -125,7 +125,7 @@ func TestReadmeDocumentsRollingMainRelease(t *testing.T) {
 		"llmgate-main-linux-amd64.tar.gz",
 		"llmgate-main-windows-arm64.zip",
 		"`checksums.txt` contains SHA-256 digests",
-		"also attaches `install.sh` and `install.ps1`",
+		"also attaches `run.sh` and `run.ps1`",
 		"Release notes include",
 	} {
 		if !strings.Contains(readme, want) {
@@ -165,8 +165,8 @@ func TestPackageScriptDryRunListsReleaseTargets(t *testing.T) {
 		"windows-amd64 -> " + filepath.Join(distDir, "llmgate-main-windows-amd64.zip"),
 		"windows-arm64 -> " + filepath.Join(distDir, "llmgate-main-windows-arm64.zip"),
 		"checksums -> " + filepath.Join(distDir, "checksums.txt"),
-		"install.sh -> " + filepath.Join(distDir, "install.sh"),
-		"install.ps1 -> " + filepath.Join(distDir, "install.ps1"),
+		"run.sh -> " + filepath.Join(distDir, "run.sh"),
+		"run.ps1 -> " + filepath.Join(distDir, "run.ps1"),
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("package dry-run missing %q in:\n%s", want, got)
@@ -207,7 +207,7 @@ func TestPackageScriptCreatesArchivesAndChecksums(t *testing.T) {
 		"llmgate-main-windows-amd64.zip",
 		"llmgate-main-windows-arm64.zip",
 	}
-	assertDirEntries(t, distDir, append(expectedArchives, "checksums.txt", "install.sh", "install.ps1"))
+	assertDirEntries(t, distDir, append(expectedArchives, "checksums.txt", "run.sh", "run.ps1"))
 	assertFakeGoBuilds(t, filepath.Join(tempDir, "fake-go.log"))
 
 	for _, name := range expectedArchives {
@@ -216,20 +216,33 @@ func TestPackageScriptCreatesArchivesAndChecksums(t *testing.T) {
 	assertChecksums(t, distDir, expectedArchives)
 }
 
-func TestReadmeDocumentsInstallScripts(t *testing.T) {
+func TestReadmeDocumentsRunScripts(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 
 	for _, want := range []string{
-		"curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh",
-		"iwr https://github.com/r13v/llmgate/releases/download/main/install.ps1 -UseB | iex",
+		"curl -fsSL https://github.com/r13v/llmgate/releases/download/main/run.sh | sh",
+		"iwr https://github.com/r13v/llmgate/releases/download/main/run.ps1 -UseB | iex",
+		"Run Script Details",
+		"cache the verified binary",
+		"If the update check fails",
+		"The scripts forward arguments to `llmgate`",
+		"curl -fsSL https://github.com/r13v/llmgate/releases/download/main/run.sh | sh -s -- --version",
+	} {
+		if !strings.Contains(readme, want) {
+			t.Fatalf("README missing run-script detail %q", want)
+		}
+	}
+
+	for _, removed := range []string{
 		"LLMGATE_INSTALL_DIR",
 		"LLMGATE_OS",
 		"LLMGATE_ARCH",
-		"LLMGATE_ADD_TO_PATH=1",
-		"do not support SemVer version selection",
+		"LLMGATE_ADD_TO_PATH",
+		"install.sh | sh",
+		"install.ps1 -UseB",
 	} {
-		if !strings.Contains(readme, want) {
-			t.Fatalf("README missing installer detail %q", want)
+		if strings.Contains(readme, removed) {
+			t.Fatalf("README still contains removed installer detail %q", removed)
 		}
 	}
 }
@@ -238,9 +251,6 @@ func TestReadmeDocumentsFinalUserContract(t *testing.T) {
 	readme := readRepoFile(t, "README.md")
 
 	for _, want := range []string{
-		"Run the wizard in an interactive terminal",
-		"llmgate --help",
-		"llmgate --version",
 		"Before startup approval",
 		"does not read files, check file existence, inspect",
 		"environment variables, run local commands, make HTTP requests, or write",

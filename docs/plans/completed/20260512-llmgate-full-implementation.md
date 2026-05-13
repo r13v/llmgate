@@ -4,7 +4,7 @@
 - Implement `llmgate` as a public Go CLI wizard that configures Claude Code to use a LiteLLM-compatible gateway, following `docs/PROJECT_SPEC.md`.
 - Build the full no-argument interactive setup flow with `huh`, diagnostics, gateway validation, model selection, apply plans, backups, writes, and final diagnostics.
 - Support macOS, Linux, and Windows as first-class platforms.
-- Add reproducible tooling, linting, unit tests, fast integration tests, full e2e acceptance tests, GitHub Actions CI, rolling `main` releases, and install scripts.
+- Add reproducible tooling, linting, unit tests, fast integration tests, full e2e acceptance tests, GitHub Actions CI, rolling `main` releases, and run scripts.
 
 ## Context
 - Files/components involved:
@@ -14,7 +14,7 @@
   - New tests under matching package directories plus e2e-focused test helpers
   - New tooling files: `Makefile`, `.golangci.yml`, `.gitignore`
   - New CI/release workflows under `.github/workflows/`
-  - New install scripts under `scripts/`
+  - New run scripts under `scripts/`
   - New docs: `README.md`, `LICENSE`
 - Related patterns found:
   - The repo is new, so local implementation patterns do not exist yet.
@@ -287,8 +287,8 @@
 - [x] Add CI matrix for Linux, macOS, and Windows using `actions/checkout@v6` and `actions/setup-go@v6` with fixed Go `1.26.3`.
 - [x] Run `make fmt`, `make lint`, `make test`, and `make test-e2e` in CI.
 - [x] Use `golangci/golangci-lint-action@v9` with pinned golangci-lint `v2.12.2`.
-- [x] Add shellcheck for `scripts/install.sh` once that script exists.
-- [x] Add PowerShell smoke for `scripts/install.ps1` once that script exists.
+- [x] Add shellcheck for `scripts/run.sh` once that script exists.
+- [x] Add PowerShell parse check for `scripts/run.ps1` once that script exists.
 - [x] Add Dependabot configuration for GitHub Actions major-tag updates where useful, without changing the chosen major-tag style.
 - [x] Run local workflow-equivalent commands where possible.
 
@@ -309,22 +309,22 @@
 - [x] Include commit SHA in artifact names or release notes.
 - [x] Add package script tests or dry-run checks where practical.
 
-### Task 14: Install Scripts
+### Task 14: Run Scripts
 **Files:**
-- Create: `scripts/install.sh`
-- Create: `scripts/install.ps1`
-- Create: `scripts/install_test.go` or `internal/installtest/...`
+- Create: `scripts/run.sh`
+- Create: `scripts/run.ps1`
+- Create: `scripts/run_test.go` or `internal/installtest/...`
 - Modify: `.github/workflows/ci.yml`
 - Modify: `.github/workflows/release-main.yml`
 - Modify: `README.md`
 
-- [x] Implement Unix install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, and installs to `/usr/local/bin` or `$HOME/.local/bin`.
-- [x] Support Unix env overrides: `LLMGATE_INSTALL_DIR`, `LLMGATE_ARCH`, and `LLMGATE_OS`; do not support SemVer version selection.
-- [x] Implement PowerShell install script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, installs to `$env:LOCALAPPDATA\Programs\llmgate\bin`, and optionally adds User PATH via `LLMGATE_ADD_TO_PATH=1`.
-- [x] Add `-DryRun` or equivalent safe mode for CI smoke tests.
-- [x] Attach install scripts to the rolling `main` release.
-- [x] Add shellcheck and PowerShell smoke checks in CI.
-- [x] Document install commands and rolling release caveat in README.
+- [x] Implement Unix run script that downloads rolling `main`, selects OS/arch, verifies `checksums.txt`, caches the binary, and starts it.
+- [x] Keep the Unix run script free of `LLMGATE_*` configuration knobs and forward arguments directly to `llmgate`.
+- [x] Implement PowerShell run script that downloads rolling `main`, selects arch, verifies `checksums.txt`, caches `llmgate.exe`, and starts it.
+- [x] Remove dry-run mode and use CI tests/parse checks instead of user-facing script flags.
+- [x] Attach run scripts to the rolling `main` release.
+- [x] Add shellcheck and PowerShell parse checks in CI.
+- [x] Document run commands and rolling release caveat in README.
 
 ### Task 15: Final Documentation and Acceptance Verification
 **Files:**
@@ -332,7 +332,7 @@
 - Modify: `docs/PROJECT_SPEC.md` if implementation-driven clarifications are needed
 - Modify: `docs/plans/20260512-llmgate-full-implementation.md`
 
-- [x] Update README with usage, privacy behavior, supported platforms, write targets, diagnostics, install scripts, build/test commands, and rolling release warning.
+- [x] Update README with usage, privacy behavior, supported platforms, write targets, diagnostics, run scripts, build/test commands, and rolling release warning.
 - [x] Verify `docs/PROJECT_SPEC.md` matches implementation scope, especially legacy managed blocks being out of scope.
 - [x] Run full local verification: `make check`.
 - [x] Run explicit cross-platform compile checks for all release targets.
@@ -371,8 +371,8 @@
 
 **Manual verification**:
 - Run `llmgate` in a real terminal on macOS with a fake local gateway and inspect the full setup flow.
-- Run the Windows installer and wizard manually on a Windows machine or VM.
-- Confirm rolling `main` release assets install correctly from GitHub after the first push to `main`.
+- Run the Windows run script and wizard manually on a Windows machine or VM.
+- Confirm rolling `main` release assets run correctly from GitHub after the first push to `main`.
 
 **External system updates**:
 - Enable GitHub Actions for `github.com/r13v/llmgate` if not already enabled.

@@ -38,42 +38,29 @@ jobs:
           go-version: "1.26.3"
           cache: true
 
-      - name: Install make on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          choco install make --no-progress -y
-          Add-Content -Path $env:GITHUB_PATH -Value 'C:\ProgramData\chocolatey\bin'
-
-      - name: Configure make shell on Windows
-        if: runner.os == 'Windows'
-        run: echo "SHELL=bash" >> "$GITHUB_ENV"
-
       - name: Show tool versions
-        run: |
-          go version
-          make --version
+        run: go version
 
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: make fmt
 
       - name: Verify formatting
+        if: runner.os == 'Linux'
         run: git diff --exit-code
 
       - name: Run golangci-lint action
+        if: runner.os == 'Linux'
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
           args: --timeout=5m ./...
 
-      - name: Run Makefile lint target
-        run: make lint
-
       - name: Run default tests
-        run: make test
+        run: go test ./...
 
       - name: Run e2e tests
-        run: make test-e2e
+        run: go test -tags=e2e ./...
 
       - name: ShellCheck run.sh
         if: runner.os == 'Linux'

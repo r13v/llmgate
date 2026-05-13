@@ -121,6 +121,13 @@ current_cache_is_valid() {
 	valid_cache_entry "$current_sha"
 }
 
+can_reopen_tty_for_wizard() {
+	[ "$#" -eq 0 ] || return 1
+	[ ! -t 0 ] || return 1
+	[ -c /dev/tty ] || return 1
+	( : </dev/tty ) 2>/dev/null
+}
+
 run_cached_entry() {
 	run_sha="$1"
 	shift
@@ -128,6 +135,9 @@ run_cached_entry() {
 	if [ -n "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 		TMP_DIR=""
+	fi
+	if can_reopen_tty_for_wizard "$@"; then
+		exec "$run_binary" "$@" </dev/tty
 	fi
 	exec "$run_binary" "$@"
 }

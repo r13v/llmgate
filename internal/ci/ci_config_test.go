@@ -31,7 +31,6 @@ func TestCIWorkflowMatchesPlan(t *testing.T) {
 		"version: v2.12.2",
 		"make fmt",
 		"go test ./...",
-		"runner.os != 'Windows'",
 		"go test -tags=e2e ./...",
 		"shellcheck scripts/run.sh",
 		"scripts/run.ps1",
@@ -76,7 +75,6 @@ func TestReadmeDocumentsCI(t *testing.T) {
 		"Linux runs formatting and linting",
 		"`go test ./...`",
 		"`go test -tags=e2e ./...`",
-		"Windows skips e2e tests",
 		"golangci-lint v2.12.2",
 	} {
 		if !strings.Contains(readme, want) {

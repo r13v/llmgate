@@ -5,9 +5,11 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,7 +18,11 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
+	"time"
+
+	"github.com/charmbracelet/x/xpty"
 )
 
 func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
@@ -56,6 +62,44 @@ func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
 	}
 	if release.Count(archiveName) != 1 {
 		t.Fatalf("%s downloads = %d, want 1", archiveName, release.Count(archiveName))
+	}
+}
+
+func TestRunSHReopensTTYForPipedNoArgWizard(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("run.sh is exercised on Unix-like platforms")
+	}
+	requireAnyTool(t, "sh")
+	requireAnyTool(t, "tar")
+	requireAnyTool(t, "curl", "wget")
+
+	archiveName := unixArchiveName(t)
+	archiveData := tarGzWithFile(t, "llmgate", 0o755, []byte(`#!/usr/bin/env sh
+if [ -t 0 ]; then
+	printf '%s\n' 'fake wizard stdin is tty'
+	exit 0
+fi
+printf '%s\n' 'fake wizard stdin is not tty'
+exit 31
+`))
+	release := newFakeRelease(t, map[string][]byte{
+		archiveName:     archiveData,
+		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
+	})
+	scriptPath := patchedRunScript(t, "run.sh", release.URL())
+	cacheDir := filepath.Join(t.TempDir(), "cache")
+
+	output, err := runSHFromPipedScriptWithPTY(t, scriptPath, cacheDir)
+	if err != nil {
+		t.Fatalf("run.sh failed: %v\n%s", err, output)
+	}
+
+	got := string(output)
+	if !strings.Contains(got, "fake wizard stdin is tty") {
+		t.Fatalf("run.sh did not reopen the controlling terminal:\n%s", got)
+	}
+	if strings.Contains(got, "fake wizard stdin is not tty") {
+		t.Fatalf("run.sh left script stdin attached to llmgate:\n%s", got)
 	}
 }
 
@@ -352,6 +396,59 @@ func runSH(t *testing.T, scriptPath, cacheDir string, appArgs ...string) ([]byte
 		"HOME":           filepath.Join(t.TempDir(), "home"),
 	})
 	return cmd.CombinedOutput()
+}
+
+func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, cacheDir string) ([]byte, error) {
+	t.Helper()
+
+	pty, err := xpty.NewUnixPty(80, 24)
+	if err != nil {
+		t.Skipf("pty unavailable: %v", err)
+	}
+	defer func() {
+		_ = pty.Close()
+	}()
+
+	cmd := exec.Command("sh", "-c", `exec sh < "$1"`, "llmgate-run-test", scriptPath)
+	cmd.Env = testEnv(map[string]string{
+		"XDG_CACHE_HOME": cacheDir,
+		"HOME":           filepath.Join(t.TempDir(), "home"),
+	})
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+
+	var output bytes.Buffer
+	readDone := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(&output, pty)
+		readDone <- copyErr
+	}()
+
+	if err := pty.Start(cmd); err != nil {
+		return output.Bytes(), err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	waitDone := make(chan error, 1)
+	go func() {
+		waitDone <- cmd.Wait()
+	}()
+
+	var waitErr error
+	select {
+	case waitErr = <-waitDone:
+	case <-ctx.Done():
+		_ = cmd.Process.Kill()
+		waitErr = ctx.Err()
+		<-waitDone
+	}
+	_ = pty.Close()
+
+	select {
+	case <-readDone:
+	case <-time.After(time.Second):
+	}
+	return output.Bytes(), waitErr
 }
 
 func runPS1(t *testing.T, ps string, psArgs []string, scriptPath, localAppData string, appArgs ...string) ([]byte, error) {

@@ -18,7 +18,6 @@ import (
 	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -414,7 +413,7 @@ func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, cacheDir string) ([]b
 		"XDG_CACHE_HOME": cacheDir,
 		"HOME":           filepath.Join(t.TempDir(), "home"),
 	})
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+	cmd.SysProcAttr = pipedScriptSysProcAttr()
 
 	var output bytes.Buffer
 	readDone := make(chan error, 1)

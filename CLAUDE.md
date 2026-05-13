@@ -23,7 +23,7 @@
 - `internal/wizard`: no-argument interactive flow built around prompt
   abstractions and `huh`.
 - `internal/e2e`: tagged acceptance harness and fake platform/gateway systems.
-- `internal/ci` and `scripts`: CI/release and installer/package verification.
+- `internal/ci` and `scripts`: CI/release and run-script/package verification.
 
 ## Commands
 
@@ -59,17 +59,17 @@ Key libraries are `charm.land/huh/v2` for interactive prompts,
 checks, `golang.org/x/sys` for platform APIs, and `charmbracelet/x/xpty` for
 terminal smoke tests.
 
-## Release And Install
+## Release And Run
 
 GitHub Actions runs CI on Linux, macOS, and Windows. Pushes to `main` publish a
-rolling prerelease named `main`; assets are overwritten in place. Installer
-scripts verify SHA-256 checksums before installing.
+rolling prerelease named `main`; assets are overwritten in place. Run scripts
+verify SHA-256 checksums before caching and starting the app.
 
 Useful script checks:
 
 - `scripts/package.sh --dry-run --dist dist`
-- `scripts/install.sh --dry-run`
-- `scripts/install.ps1 -DryRun`
+- `shellcheck scripts/run.sh`
+- `pwsh -NoProfile -NonInteractive -Command '$null = [scriptblock]::Create((Get-Content -Raw ./scripts/run.ps1))'`
 
 ## Debugging Notes
 

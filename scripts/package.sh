@@ -78,8 +78,8 @@ required_file() {
 
 required_file "$ROOT_DIR/README.md"
 required_file "$ROOT_DIR/LICENSE"
-required_file "$ROOT_DIR/scripts/install.sh"
-required_file "$ROOT_DIR/scripts/install.ps1"
+required_file "$ROOT_DIR/scripts/run.sh"
+required_file "$ROOT_DIR/scripts/run.ps1"
 
 if [ "$DRY_RUN" -eq 1 ]; then
 	echo "version=$VERSION"
@@ -98,8 +98,8 @@ if [ "$DRY_RUN" -eq 1 ]; then
 		echo "$goos-$goarch -> $DIST_DIR/$PACKAGE_PREFIX-$goos-$goarch.$extension"
 	done
 	echo "checksums -> $DIST_DIR/checksums.txt"
-	echo "install.sh -> $DIST_DIR/install.sh"
-	echo "install.ps1 -> $DIST_DIR/install.ps1"
+	echo "run.sh -> $DIST_DIR/run.sh"
+	echo "run.ps1 -> $DIST_DIR/run.ps1"
 	exit 0
 fi
 
@@ -190,9 +190,9 @@ for archive in "$DIST_DIR"/"$PACKAGE_PREFIX"-*.tar.gz "$DIST_DIR"/"$PACKAGE_PREF
 	printf "%s  %s\n" "$(checksum_file "$archive")" "$(basename "$archive")" >>"$checksums"
 done
 
-cp "$ROOT_DIR/scripts/install.sh" "$DIST_DIR/install.sh"
-cp "$ROOT_DIR/scripts/install.ps1" "$DIST_DIR/install.ps1"
-chmod 755 "$DIST_DIR/install.sh"
-chmod 644 "$DIST_DIR/install.ps1"
+cp "$ROOT_DIR/scripts/run.sh" "$DIST_DIR/run.sh"
+cp "$ROOT_DIR/scripts/run.ps1" "$DIST_DIR/run.ps1"
+chmod 755 "$DIST_DIR/run.sh"
+chmod 644 "$DIST_DIR/run.ps1"
 
 echo "wrote release artifacts to $DIST_DIR"

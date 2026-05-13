@@ -8,81 +8,49 @@ approval, validates gateway credentials, recommends or selects Claude model
 mapping, previews an apply plan, writes selected targets, and reruns diagnostics.
 Builds from `main` are rolling prereleases and can change on every push.
 
-## Install
+## Run
 
-Install scripts are published with the rolling `main` prerelease. Assets are
-replaced on every push to `main`, so inspect the release notes and rerun the
-installer only when you intentionally want the latest build.
+Run `llmgate` with one copy/paste command. Builds from `main` are rolling
+prereleases and can change on every push.
 
-Unix:
+MacOS/Linux:
 
 ```sh
-curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh
-curl -fsSL https://github.com/r13v/llmgate/releases/download/main/install.sh | sh -s -- --dry-run
+curl -fsSL https://github.com/r13v/llmgate/releases/download/main/run.sh | sh
 ```
 
-The Unix installer downloads the matching Linux or macOS archive, verifies its
-SHA-256 digest against `checksums.txt`, and installs `llmgate` into
-`/usr/local/bin` when that directory is writable, otherwise `$HOME/.local/bin`.
-It requires `curl` or `wget`, `tar`, and one SHA-256 tool: `sha256sum`,
-`shasum`, or `openssl`.
-Supported overrides are:
-
-- `LLMGATE_INSTALL_DIR`
-- `LLMGATE_OS` (`linux` or `darwin`)
-- `LLMGATE_ARCH` (`amd64` or `arm64`)
-- `LLMGATE_RELEASE_URL`
-- `LLMGATE_PACKAGE_PREFIX`
-
-PowerShell:
+Windows:
 
 ```powershell
-iwr https://github.com/r13v/llmgate/releases/download/main/install.ps1 -UseB | iex
-scripts/install.ps1 -DryRun
+iwr https://github.com/r13v/llmgate/releases/download/main/run.ps1 -UseB | iex
 ```
 
-The PowerShell installer downloads the matching Windows archive, verifies
-`checksums.txt`, and installs `llmgate.exe` into
-`$env:LOCALAPPDATA\Programs\llmgate\bin`. Set `LLMGATE_ADD_TO_PATH=1` before
-running it to add that directory to the User PATH. It requires PowerShell with
+## Run Script Details
+
+The run scripts download the matching archive for your OS and CPU, verify its
+SHA-256 digest against `checksums.txt`, cache the verified binary, and start
+`llmgate`. On later runs, they check for updates and reuse the cache when the
+rolling `main` build has not changed. If the update check fails, a previously
+verified cached binary can still run.
+
+Cache locations:
+
+- Unix: `${XDG_CACHE_HOME:-$HOME/.cache}/llmgate/main/<os>-<arch>/`
+- Windows: `$env:LOCALAPPDATA\llmgate\cache\main\windows-<arch>\`
+
+The scripts forward arguments to `llmgate`. For example:
+
+```sh
+curl -fsSL https://github.com/r13v/llmgate/releases/download/main/run.sh | sh -s -- --version
+```
+
+```powershell
+& ([scriptblock]::Create((iwr https://github.com/r13v/llmgate/releases/download/main/run.ps1 -UseB).Content)) --version
+```
+
+The Unix script requires `curl` or `wget`, `tar`, and one SHA-256 tool:
+`sha256sum`, `shasum`, or `openssl`. The PowerShell script requires
 `Invoke-WebRequest`, `Get-FileHash`, and `Expand-Archive`.
-Supported overrides are:
-
-- `LLMGATE_INSTALL_DIR`
-- `LLMGATE_OS` (`windows`)
-- `LLMGATE_ARCH` (`amd64` or `arm64`)
-- `LLMGATE_RELEASE_URL`
-- `LLMGATE_PACKAGE_PREFIX`
-- `LLMGATE_ADD_TO_PATH=1`
-
-The installers do not support SemVer version selection; they only install the
-rolling `main` prerelease.
-
-## Usage
-
-Run the wizard in an interactive terminal:
-
-```sh
-llmgate
-```
-
-The wizard asks for approval before reading local configuration. If approved, it
-runs diagnostics, then offers setup, repair, review-details, or exit actions
-depending on the current state. Setup prompts for or reuses a gateway token,
-prompts for the LiteLLM-compatible base URL, validates `/v1/models`, recommends
-Claude model mapping when possible, probes selected models with a tiny `ping`
-chat completion, lets you choose write targets, and shows an apply plan before
-anything is changed.
-
-Other public flags:
-
-```sh
-llmgate --help
-llmgate --version
-```
-
-No-argument setup requires an interactive terminal. Non-interactive invocation
-fails with a clear message and does not start the wizard.
 
 ## Gateway Compatibility
 
@@ -232,8 +200,8 @@ The workflow runs `make fmt`, verifies the formatted diff is clean, runs
 `make lint`, `make test`, and `make test-e2e`, and also uses
 `golangci/golangci-lint-action@v9` with pinned `golangci-lint v2.12.2`.
 
-Linux runs `shellcheck scripts/install.sh`, and Windows runs a PowerShell
-`scripts/install.ps1 -DryRun` smoke check.
+Linux runs `shellcheck scripts/run.sh`, and Windows parses `scripts/run.ps1`
+with PowerShell.
 
 ## Rolling Main Release
 
@@ -253,5 +221,5 @@ Release archives:
 
 Each archive contains the `llmgate` binary, `README.md`, and `LICENSE`.
 `checksums.txt` contains SHA-256 digests for all archives. The rolling release
-also attaches `install.sh` and `install.ps1`. Release notes include the commit
+also attaches `run.sh` and `run.ps1`. Release notes include the commit
 SHA used for the rolling build.

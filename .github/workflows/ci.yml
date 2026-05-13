@@ -75,11 +75,11 @@ jobs:
       - name: Run e2e tests
         run: make test-e2e
 
-      - name: ShellCheck install.sh
+      - name: ShellCheck run.sh
         if: runner.os == 'Linux'
-        run: shellcheck scripts/install.sh
+        run: shellcheck scripts/run.sh
 
-      - name: PowerShell install.ps1 smoke
+      - name: PowerShell run.ps1 parse
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/install.ps1 -DryRun
+        run: $null = [scriptblock]::Create((Get-Content -Raw ./scripts/run.ps1))

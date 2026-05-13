@@ -26,18 +26,27 @@ func TestCIWorkflowMatchesPlan(t *testing.T) {
 		"ubuntu-latest",
 		"macos-latest",
 		"windows-latest",
+		"runner.os == 'Linux'",
 		"golangci/golangci-lint-action@v9",
 		"version: v2.12.2",
 		"make fmt",
-		"make lint",
-		"make test",
-		"make test-e2e",
+		"go test ./...",
+		"go test -tags=e2e ./...",
 		"shellcheck scripts/run.sh",
 		"scripts/run.ps1",
 		"[scriptblock]::Create",
 	} {
 		if !strings.Contains(workflow, want) {
 			t.Fatalf("CI workflow missing %q", want)
+		}
+	}
+
+	for _, unwanted := range []string{
+		"choco install make",
+		"Run Makefile lint target",
+	} {
+		if strings.Contains(workflow, unwanted) {
+			t.Fatalf("CI workflow should not contain slow duplicate step %q", unwanted)
 		}
 	}
 }
@@ -63,10 +72,9 @@ func TestReadmeDocumentsCI(t *testing.T) {
 	for _, want := range []string{
 		"GitHub Actions",
 		"Linux, macOS, and Windows",
-		"make fmt",
-		"make lint",
-		"make test",
-		"make test-e2e",
+		"Linux runs formatting and linting",
+		"`go test ./...`",
+		"`go test -tags=e2e ./...`",
 		"golangci-lint v2.12.2",
 	} {
 		if !strings.Contains(readme, want) {

@@ -182,7 +182,6 @@ function Invoke-CurrentCacheWithStatus {
 		}
 		Invoke-CacheEntry -ArchiveSha $currentSha
 	}
-	return $false
 }
 
 function Enter-UpdateLock {
@@ -298,13 +297,13 @@ try {
 	try {
 		Download-File -Uri "$ReleaseUrl/checksums.txt" -OutFile $checksumsPath
 	} catch {
-		Invoke-CurrentCacheWithStatus -Message "Could not check for updates; running cached llmgate." | Out-Null
+		Invoke-CurrentCacheWithStatus -Message "Could not check for updates; running cached llmgate."
 		Fail-Run "could not check for updates and no valid cached llmgate is available"
 	}
 
 	$expectedArchiveSha = Find-ExpectedChecksum -ChecksumsPath $checksumsPath -ArchiveName $script:ArchiveName
 	if (-not (Test-Sha256Hex -Value $expectedArchiveSha)) {
-		Invoke-CurrentCacheWithStatus -Message "Could not verify latest release; running cached llmgate." | Out-Null
+		Invoke-CurrentCacheWithStatus -Message "Could not verify latest release; running cached llmgate."
 		Fail-Run "checksum entry not found for $script:ArchiveName"
 	}
 
@@ -314,7 +313,7 @@ try {
 	}
 
 	if (-not (Enter-UpdateLock)) {
-		Invoke-CurrentCacheWithStatus -Message "Could not acquire update lock; running cached llmgate." | Out-Null
+		Invoke-CurrentCacheWithStatus -Message "Could not acquire update lock; running cached llmgate."
 		Fail-Run "could not acquire update lock and no valid cached llmgate is available"
 	}
 
@@ -332,7 +331,7 @@ try {
 
 	if (-not (Update-Cache -ExpectedArchiveSha $expectedArchiveSha)) {
 		Release-UpdateLock
-		Invoke-CurrentCacheWithStatus -Message "Could not update llmgate; running cached llmgate." | Out-Null
+		Invoke-CurrentCacheWithStatus -Message "Could not update llmgate; running cached llmgate."
 		Fail-Run "could not update llmgate: $script:UpdateError"
 	}
 

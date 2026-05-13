@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +30,7 @@ func TestXPTYPasswordTokenPromptSmoke(t *testing.T) {
 		done <- ptyPromptResult{value: value, err: err}
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitForPTYOutput(t, pty, "Gateway API token")
 	if _, err := pty.Write([]byte(testToken + "\r")); err != nil {
 		t.Fatalf("write token to pty: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestXPTYPromptCancellationSmoke(t *testing.T) {
 		done <- err
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitForPTYOutput(t, pty, "Allow llmgate to inspect local Claude Code configuration?")
 	if _, err := pty.Write([]byte{3}); err != nil {
 		t.Fatalf("write ctrl-c to pty: %v", err)
 	}
@@ -90,7 +91,7 @@ func TestXPTYWizardStartupCancellationSmoke(t *testing.T) {
 		done <- err
 	}()
 
-	time.Sleep(150 * time.Millisecond)
+	waitForPTYOutput(t, pty, "Allow llmgate to inspect local Claude Code configuration?")
 	if _, err := pty.Write([]byte{3}); err != nil {
 		t.Fatalf("write ctrl-c to pty: %v", err)
 	}
@@ -139,4 +140,38 @@ func waitPromptResult(t *testing.T, pty *xpty.UnixPty, done <-chan ptyPromptResu
 		t.Fatal("prompt did not return")
 	}
 	return ptyPromptResult{}
+}
+
+func waitForPTYOutput(t *testing.T, pty *xpty.UnixPty, want string) {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() {
+		var output strings.Builder
+		buf := make([]byte, 4096)
+		for {
+			n, err := pty.Read(buf)
+			if n > 0 {
+				output.Write(buf[:n])
+				if strings.Contains(output.String(), want) {
+					done <- nil
+					return
+				}
+			}
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("read pty output waiting for %q: %v", want, err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = pty.Close()
+		t.Fatalf("prompt %q did not render", want)
+	}
 }

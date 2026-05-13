@@ -196,9 +196,9 @@ overrides are `GO`, `VERSION`, `COMMIT`, `DATE`, `DIST_DIR`, and
 ## CI
 
 GitHub Actions runs the project on Linux, macOS, and Windows with Go `1.26.3`.
-The workflow runs `make fmt`, verifies the formatted diff is clean, runs
-`make lint`, `make test`, and `make test-e2e`, and also uses
-`golangci/golangci-lint-action@v9` with pinned `golangci-lint v2.12.2`.
+Linux runs formatting and linting, verifies the formatted diff is clean, and
+uses `golangci/golangci-lint-action@v9` with pinned `golangci-lint v2.12.2`.
+All operating systems run `go test ./...` and run `go test -tags=e2e ./...`.
 
 Linux runs `shellcheck scripts/run.sh`, and Windows parses `scripts/run.ps1`
 with PowerShell.

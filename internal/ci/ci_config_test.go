@@ -99,6 +99,7 @@ func TestReleaseWorkflowMatchesPlan(t *testing.T) {
 		"gh release edit main",
 		"gh release upload main dist/* --clobber",
 		"GITHUB_TOKEN: ${{ github.token }}",
+		"--draft=false",
 		"--prerelease",
 		"--target \"${GITHUB_SHA}\"",
 		"Rolling main prerelease for commit ${COMMIT_SHA}.",

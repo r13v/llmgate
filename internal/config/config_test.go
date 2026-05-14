@@ -75,6 +75,87 @@ func TestReadAndResolveUnixSourcePrecedence(t *testing.T) {
 	assertRuntimeDifference(t, resolved.Runtime, DifferencePersistedOnly, core.VarAnthropicDefaultOpusModel)
 }
 
+func TestResolveWithOptionsUsesCurrentProcessEnvironmentByDefault(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	fileSystem.addFile("/home/ada/.zshrc", []byte(strings.Join([]string{
+		"export ANTHROPIC_BASE_URL='https://new-session.example.com'",
+		"",
+	}, "\n")))
+
+	read, err := Read(testSystem(fileSystem, "linux", "/home/ada", "/home/ada/project", map[string]string{
+		"SHELL":              "/bin/zsh",
+		"ANTHROPIC_BASE_URL": "https://stale-process.example.com",
+	}), true)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	for name, resolved := range map[string]Resolution{
+		"Resolve":        Resolve(read),
+		"empty options":  ResolveWithOptions(read, ResolveOptions{}),
+		"process option": ResolveWithOptions(read, ResolveOptions{CurrentMode: CurrentModeProcessEnvironment}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			if resolved.Current.Name != "current environment" {
+				t.Fatalf("Current.Name = %q, want current environment", resolved.Current.Name)
+			}
+			assertResolved(t, resolved.Current, core.VarAnthropicBaseURL, "https://stale-process.example.com", core.SourceCurrentEnv)
+			assertRuntimeDifference(t, resolved.Runtime, DifferenceCurrentDiffers, core.VarAnthropicBaseURL)
+		})
+	}
+}
+
+func TestResolveWithOptionsNewSessionUsesPersistedGlobalSources(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	fileSystem.addFile("/home/ada/.zshrc", []byte(strings.Join([]string{
+		"export ANTHROPIC_BASE_URL='https://new-session.example.com'",
+		"export ANTHROPIC_MODEL='claude-new-session'",
+		"",
+	}, "\n")))
+	fileSystem.addDir("/home/ada/.config/Code/User")
+	fileSystem.addFile("/home/ada/.config/Code/User/settings.json", []byte(`{
+		"claudeCode.selectedModel": "claude-ide-stale",
+		"claudeCode.environmentVariables": [
+			{ "name": "ANTHROPIC_BASE_URL", "value": "https://new-session.example.com" }
+		]
+	}`))
+	fileSystem.addFile("/home/ada/project/.claude/settings.local.json", []byte(`{
+		"env": {
+			"ANTHROPIC_BASE_URL": "https://project.example.com"
+		}
+	}`))
+
+	read, err := Read(testSystem(fileSystem, "linux", "/home/ada", "/home/ada/project", map[string]string{
+		"SHELL":              "/bin/zsh",
+		"ANTHROPIC_BASE_URL": "https://stale-process.example.com",
+		"ANTHROPIC_MODEL":    "claude-stale-process",
+	}), true)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	resolved := ResolveWithOptions(read, ResolveOptions{CurrentMode: CurrentModeNewSession})
+	if resolved.Current.Name != "new terminal session" {
+		t.Fatalf("Current.Name = %q, want new terminal session", resolved.Current.Name)
+	}
+	assertResolved(t, resolved.Current, core.VarAnthropicBaseURL, "https://new-session.example.com", core.SourceShellProfile)
+	assertResolved(t, resolved.Current, core.VarAnthropicModel, "claude-new-session", core.SourceShellProfile)
+	if len(resolved.Runtime) != 0 {
+		t.Fatalf("Runtime = %#v, want no differences for new-session current context", resolved.Runtime)
+	}
+	if hasSideDifference(resolved.IDEDrift, core.VarAnthropicBaseURL, core.SourceVSCodeSettings) {
+		t.Fatalf("IDE value matching new session should not be reported as drift: %#v", resolved.IDEDrift)
+	}
+	projectDifference := assertSideDifference(t, resolved.ProjectOverrides, DifferenceProjectOverride, core.VarAnthropicBaseURL, core.SourceProjectLocalSettings)
+	if projectDifference.ComparedAgainst != "new terminal session" {
+		t.Fatalf("project ComparedAgainst = %q, want new terminal session", projectDifference.ComparedAgainst)
+	}
+	ideDifference := assertSideDifference(t, resolved.IDEDrift, DifferenceIDEDrift, core.VarAnthropicModel, core.SourceVSCodeSettings)
+	if ideDifference.ComparedAgainst != "new terminal session" {
+		t.Fatalf("IDE ComparedAgainst = %q, want new terminal session", ideDifference.ComparedAgainst)
+	}
+}
+
 func TestResolveDetectsPersistedConflictsShellIssuesAndCurrentOnlyValues(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	fileSystem.addFile("/home/ada/.claude/settings.json", []byte(`{
@@ -272,14 +353,15 @@ func assertRuntimeDifference(t *testing.T, differences []RuntimeDifference, kind
 	t.Fatalf("runtime difference %s for %s not found in %#v", kind, name, differences)
 }
 
-func assertSideDifference(t *testing.T, differences []SideContextDifference, kind DifferenceKind, name string, source core.SourceKind) {
+func assertSideDifference(t *testing.T, differences []SideContextDifference, kind DifferenceKind, name string, source core.SourceKind) SideContextDifference {
 	t.Helper()
 	for _, difference := range differences {
 		if difference.Kind == kind && difference.Name == name && difference.Context.Kind == source {
-			return
+			return difference
 		}
 	}
 	t.Fatalf("side difference %s for %s from %s not found in %#v", kind, name, source, differences)
+	return SideContextDifference{}
 }
 
 func hasSideDifference(differences []SideContextDifference, name string, source core.SourceKind) bool {

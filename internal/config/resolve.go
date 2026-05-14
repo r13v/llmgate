@@ -16,16 +16,38 @@ type Resolution struct {
 	IDEDrift         []SideContextDifference
 }
 
+type CurrentMode string
+
+const (
+	CurrentModeProcessEnvironment CurrentMode = "process-environment"
+	CurrentModeNewSession         CurrentMode = "new-session"
+)
+
+type ResolveOptions struct {
+	CurrentMode CurrentMode
+}
+
 func Resolve(read ReadResult) Resolution {
+	return ResolveWithOptions(read, ResolveOptions{})
+}
+
+func ResolveWithOptions(read ReadResult, opts ResolveOptions) Resolution {
 	resolution := Resolution{
 		SourceIssues: append([]SourceIssue(nil), read.SourceIssues...),
 	}
 
 	persistedSources := filterSources(read.Sources, core.SourceClaudeUserSettings, core.SourceShellProfile, core.SourceWindowsUserEnv)
+	currentName := "current environment"
 	currentSources := filterSources(read.Sources, core.SourceClaudeUserSettings, core.SourceCurrentEnv)
+	currentKeepExistingOnEqual := true
+	if opts.CurrentMode == CurrentModeNewSession {
+		currentName = "new terminal session"
+		currentSources = persistedSources
+		currentKeepExistingOnEqual = false
+	}
 
 	resolution.Persisted = resolveConfig("persisted config for new sessions", persistedSources, false)
-	resolution.Current = resolveConfig("current environment", currentSources, true)
+	resolution.Current = resolveConfig(currentName, currentSources, currentKeepExistingOnEqual)
 	resolution.Conflicts = collectConflicts(persistedSources, resolution.Persisted)
 	resolution.Runtime = compareCurrentAndPersisted(resolution.Current, resolution.Persisted)
 	resolution.ProjectOverrides = compareSideContexts(

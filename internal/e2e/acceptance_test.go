@@ -476,6 +476,37 @@ func TestAcceptanceWindowsIDEScenarios(t *testing.T) {
 		}
 	})
 
+	t.Run("Windows setup final diagnostics use reread user environment", func(t *testing.T) {
+		h := newHarness(t, withPlatform("windows", `C:\Users\Ada`, `C:\Users\Ada\project`))
+		h.env.values["APPDATA"] = `C:\Users\Ada\AppData\Roaming`
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("Windows setup error = %v\n%s", err, output)
+		}
+
+		if h.winEnv.values[core.VarAnthropicAuthToken] != testToken {
+			t.Fatalf("Windows user env token = %q, want setup token", h.winEnv.values[core.VarAnthropicAuthToken])
+		}
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertContains(t, final, "Configured")
+		assertContains(t, final, "Current terminal note:")
+		assertNotContains(t, final, "current environment")
+		assertNoSecretLeak(t, output, altTestToken, testToken)
+	})
+
 	t.Run("IDE targets require directories and preserve settings", func(t *testing.T) {
 		noIDE := newHarness(t)
 		output, err := noIDE.runScripted([]promptResponse{
@@ -755,8 +786,11 @@ func TestAcceptanceSetupFinalDiagnosticsNewSessionScenarios(t *testing.T) {
 		assertContains(t, final, "Configured with warnings")
 		assertContains(t, final, "differs from new terminal session")
 		assertNotContains(t, output, "old cached gateway failure")
-		if h.gateway.listCalls < 3 {
-			t.Fatalf("gateway list calls = %d, want at least 3 to prove final IDE validation bypassed failed cache", h.gateway.listCalls)
+		h.gateway.mu.Lock()
+		staleIDERequests := countString(h.gateway.listTokens, altTestToken)
+		h.gateway.mu.Unlock()
+		if staleIDERequests < 2 {
+			t.Fatalf("stale IDE token list requests = %d, want pre-cache plus final bypass request", staleIDERequests)
 		}
 	})
 

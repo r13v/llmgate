@@ -180,10 +180,13 @@ func buildConflictSection(conflicts []config.ConflictIssue) (core.DiagnosticSect
 	}, true
 }
 
-func buildRuntimeSection(resolution config.Resolution) core.DiagnosticSection {
+func buildRuntimeSection(resolution config.Resolution) (core.DiagnosticSection, bool) {
 	differences := resolution.Runtime
 	currentName := resolution.Current.Name
 	persistedName := resolution.Persisted.Name
+	if currentName == contextNewSession {
+		return core.DiagnosticSection{}, false
+	}
 	if len(differences) == 0 {
 		return core.DiagnosticSection{
 			ID:    sectionRuntimeEnvironment,
@@ -194,7 +197,7 @@ func buildRuntimeSection(resolution config.Resolution) core.DiagnosticSection {
 				Status:  core.StatusOK,
 				Summary: fmt.Sprintf("%s and %s match for managed values", currentName, persistedName),
 			}},
-		}
+		}, true
 	}
 
 	checks := make([]core.DiagnosticCheck, 0, len(differences))
@@ -212,7 +215,7 @@ func buildRuntimeSection(resolution config.Resolution) core.DiagnosticSection {
 		ID:     sectionRuntimeEnvironment,
 		Title:  "Runtime Environment",
 		Checks: checks,
-	}
+	}, true
 }
 
 func buildSourceIssueSection(issues []config.SourceIssue) (core.DiagnosticSection, bool) {
@@ -545,6 +548,9 @@ func gatewayFailureDetails(err error) []string {
 	details := []string{"reason: " + err.Error()}
 	var gatewayErr *gateway.Error
 	if !errors.As(err, &gatewayErr) {
+		if explanation := gateway.ExplainFailure(err); explanation.Cause != "" {
+			details = append(details, "what it means: "+explanation.Cause)
+		}
 		return details
 	}
 	if gatewayErr.URL != "" {
@@ -556,29 +562,14 @@ func gatewayFailureDetails(err error) []string {
 	if gatewayErr.StatusCode != 0 {
 		details = append(details, fmt.Sprintf("HTTP status: %d", gatewayErr.StatusCode))
 	}
-	if meaning := gatewayFailureMeaning(gatewayErr); meaning != "" {
-		details = append(details, "what it means: "+meaning)
+	explanation := gateway.ExplainFailure(err)
+	if explanation.Cause != "" {
+		details = append(details, "what it means: "+explanation.Cause)
+	}
+	if explanation.Remediation != "" {
+		details = append(details, "fix: "+explanation.Remediation)
 	}
 	return details
-}
-
-func gatewayFailureMeaning(err *gateway.Error) string {
-	switch err.Kind {
-	case gateway.FailureAuth:
-		return "the gateway rejected the configured token; check ANTHROPIC_AUTH_TOKEN for this source"
-	case gateway.FailureNetwork:
-		return "llmgate could not reach the gateway; check the base URL, DNS, VPN/proxy, TLS, and network access"
-	case gateway.FailureHTTP:
-		return "the gateway returned a non-success HTTP response; inspect the gateway/upstream logs and base URL"
-	case gateway.FailureInvalidJSON:
-		return "the gateway response was not OpenAI-compatible JSON"
-	case gateway.FailureEmptyModels:
-		return "the gateway returned no usable model IDs"
-	case gateway.FailureInvalidURL:
-		return "the configured base URL is malformed; use an http(s) LiteLLM gateway root or /v1 URL"
-	default:
-		return ""
-	}
 }
 
 func resolvedDisplay(value core.ResolvedValue) string {

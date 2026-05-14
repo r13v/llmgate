@@ -105,8 +105,8 @@ func TestXPTYWizardStartupCancellationSmoke(t *testing.T) {
 		_ = pty.Close()
 		t.Fatal("wizard did not return after startup cancellation")
 	}
-	if h.fs.readOps != 0 || h.fs.statOps != 0 || h.commands.calls != 0 {
-		t.Fatalf("startup cancellation touched local state: reads=%d stats=%d commands=%d", h.fs.readOps, h.fs.statOps, h.commands.calls)
+	if h.fs.readOps != 0 || h.fs.statOps != 0 || h.env.readOps() != 0 || h.commands.calls != 0 {
+		t.Fatalf("startup cancellation touched local state: reads=%d stats=%d env=%d commands=%d", h.fs.readOps, h.fs.statOps, h.env.readOps(), h.commands.calls)
 	}
 }
 

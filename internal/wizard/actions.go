@@ -41,11 +41,6 @@ type runResult struct {
 	Diagnostics diagnose.Result
 }
 
-type finalizationOptions struct {
-	DiagnosticOptions        diagnose.Options
-	PrintCurrentTerminalNote bool
-}
-
 type displayOptions struct {
 	HomeDir string
 	GOOS    string
@@ -81,6 +76,7 @@ func Run(ctx context.Context, opts Options) error {
 		_, _ = fmt.Fprintln(r.out, "No files were read or changed.")
 		return ErrStartupDeclined
 	}
+	r.enableTerminalFeatures(opts.Accessible)
 
 	result, err := r.readAndDiagnose(ctx)
 	if err != nil {
@@ -131,18 +127,20 @@ func newRunner(opts Options) runner {
 	if client.Cache == nil {
 		client.Cache = gateway.NewCache()
 	}
-	color := shouldUseANSI(out, opts.System.Env, opts.Accessible)
 	return runner{
-		sys:      opts.System,
-		gateway:  client,
-		prompts:  prompts,
-		out:      out,
-		network:  !opts.SkipNetworkChecks,
-		apply:    opts.ApplyOptions,
-		command:  opts.CommandTimeout,
-		color:    color,
-		progress: newProgressReporter(out, opts.System.Env, opts.Accessible),
+		sys:     opts.System,
+		gateway: client,
+		prompts: prompts,
+		out:     out,
+		network: !opts.SkipNetworkChecks,
+		apply:   opts.ApplyOptions,
+		command: opts.CommandTimeout,
 	}
+}
+
+func (r *runner) enableTerminalFeatures(accessible bool) {
+	r.color = shouldUseANSI(r.out, r.sys.Env, accessible)
+	r.progress = newProgressReporter(r.out, r.sys.Env, accessible)
 }
 
 func (r runner) readAndDiagnose(ctx context.Context) (runResult, error) {
@@ -356,7 +354,7 @@ func (r runner) selectTargetsAndApplySetup(ctx context.Context, paths system.Dis
 			continue
 		}
 
-		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken}, setupFinalizationOptions())
+		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken}, setupFinalDiagnosticOptions(), true)
 	}
 }
 
@@ -385,20 +383,17 @@ func (r runner) runRepair(ctx context.Context, result runResult) error {
 		_, _ = fmt.Fprintln(r.out, "No files were changed.")
 		return nil
 	}
-	return r.applyPlanAndFinalize(ctx, plan, nil, finalizationOptions{})
+	return r.applyPlanAndFinalize(ctx, plan, nil, diagnose.Options{}, false)
 }
 
-func setupFinalizationOptions() finalizationOptions {
-	return finalizationOptions{
-		DiagnosticOptions: diagnose.Options{
-			CurrentMode:              config.CurrentModeNewSession,
-			BypassFailedGatewayCache: true,
-		},
-		PrintCurrentTerminalNote: true,
+func setupFinalDiagnosticOptions() diagnose.Options {
+	return diagnose.Options{
+		CurrentMode:              config.CurrentModeNewSession,
+		BypassFailedGatewayCache: true,
 	}
 }
 
-func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string, opts finalizationOptions) error {
+func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string, diagnosticOpts diagnose.Options, printCurrentTerminalNote bool) error {
 	result, err := apply.Apply(r.sys, plan, r.apply)
 	_, _ = fmt.Fprint(r.out, apply.RenderResult(result, apply.RenderOptions{
 		KnownSecrets: knownSecrets,
@@ -409,12 +404,12 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 		return err
 	}
 
-	final, err := r.readAndDiagnoseWithOptions(ctx, opts.DiagnosticOptions)
+	final, err := r.readAndDiagnoseWithOptions(ctx, diagnosticOpts)
 	if err != nil {
 		return err
 	}
 	r.printDiagnosticSummary("Final diagnostics", final.Diagnostics)
-	if opts.PrintCurrentTerminalNote {
+	if printCurrentTerminalNote {
 		r.printCurrentTerminalNote(final.Diagnostics)
 	}
 	switch final.Diagnostics.Status() {

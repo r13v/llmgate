@@ -127,7 +127,8 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 		"request URL: " + server.URL + "/v1/models",
 		"failure kind: auth",
 		"HTTP status: 401",
-		"what it means: the gateway rejected the configured token",
+		"what it means: The gateway rejected the configured ANTHROPIC_AUTH_TOKEN.",
+		"fix: Update ANTHROPIC_AUTH_TOKEN",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("gateway failure details missing %q:\n%s", want, rendered)
@@ -172,6 +173,9 @@ func TestRunNewSessionModeRendersNewSessionContextAndIgnoresStaleProcessEnv(t *t
 	}
 	if result.Resolution.Current.Name != "new terminal session" {
 		t.Fatalf("Current.Name = %q, want new terminal session", result.Resolution.Current.Name)
+	}
+	if sectionStatus(result, "Runtime Environment", core.StatusOK) {
+		t.Fatalf("new-session diagnostics should not render a runtime context comparison:\n%s", Render(result, RenderOptions{}))
 	}
 	for _, title := range []string{
 		"Gateway (new terminal session)",

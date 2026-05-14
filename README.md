@@ -183,6 +183,10 @@ failure that is not covered by a finding is still shown, and `Review details`
 keeps the full check-level diagnostic evidence, including sanitized gateway
 response details where useful.
 
+Interactive terminals may show transient progress while diagnostics list
+gateway models or probe selected models. Set `NO_COLOR` to disable ANSI color;
+`TERM=dumb` disables terminal control. Non-TTY output omits progress lines.
+
 ## Build and Test
 
 The project uses Go `1.26.3`.

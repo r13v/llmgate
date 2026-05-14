@@ -108,28 +108,3 @@ func TestDiagnosticSectionStatus(t *testing.T) {
 		t.Fatalf("section.Status() = %s, want WARN", got)
 	}
 }
-
-func TestDiagnosticFindingCarriesStructuredFields(t *testing.T) {
-	finding := DiagnosticFinding{
-		ID:            "gateway.auth",
-		Status:        StatusFAIL,
-		Title:         "Gateway: token rejected",
-		Summary:       "The configured gateway token was rejected.",
-		Evidence:      []string{"HTTP status: 401"},
-		Remediation:   "Update the active token.",
-		RelatedChecks: []string{"gateway.validation"},
-	}
-
-	if finding.ID != "gateway.auth" {
-		t.Fatalf("finding.ID = %q, want gateway.auth", finding.ID)
-	}
-	if finding.Status != StatusFAIL {
-		t.Fatalf("finding.Status = %s, want FAIL", finding.Status)
-	}
-	if len(finding.Evidence) != 1 || finding.Evidence[0] != "HTTP status: 401" {
-		t.Fatalf("finding.Evidence = %#v, want HTTP status evidence", finding.Evidence)
-	}
-	if len(finding.RelatedChecks) != 1 || finding.RelatedChecks[0] != "gateway.validation" {
-		t.Fatalf("finding.RelatedChecks = %#v, want gateway.validation", finding.RelatedChecks)
-	}
-}

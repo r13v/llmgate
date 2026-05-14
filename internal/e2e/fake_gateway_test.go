@@ -45,6 +45,7 @@ type fakeGateway struct {
 	fallbackCalls   int
 	probeCalls      int
 	paths           []string
+	listTokens      []string
 	probedModels    []string
 	probePingBodies int
 }
@@ -120,6 +121,7 @@ func (g *fakeGateway) serveModels(w http.ResponseWriter, r *http.Request, fallba
 		g.fallbackCalls++
 	} else {
 		g.listCalls++
+		g.listTokens = append(g.listTokens, token)
 	}
 	response := gatewayResponse{status: http.StatusOK, models: append([]string(nil), g.models...)}
 	if len(g.listResponses) > 0 {

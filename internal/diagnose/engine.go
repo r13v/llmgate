@@ -52,7 +52,9 @@ func Run(ctx context.Context, sys system.System, read config.ReadResult, opts Op
 	if section, ok := buildConflictSection(resolution.Conflicts); ok {
 		result.Sections = append(result.Sections, section)
 	}
-	result.Sections = append(result.Sections, buildRuntimeSection(resolution))
+	if section, ok := buildRuntimeSection(resolution); ok {
+		result.Sections = append(result.Sections, section)
+	}
 	if section, ok := buildSourceIssueSection(resolution.SourceIssues); ok {
 		result.Sections = append(result.Sections, section)
 	}

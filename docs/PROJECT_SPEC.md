@@ -376,6 +376,26 @@ OK < SKIP < WARN < FAIL
 
 Empty diagnostics aggregate to `OK`.
 
+## Diagnostic summary format
+
+The interactive wizard's first diagnostic screen may show structured findings
+before raw check summaries. A finding has:
+
+- stable `id`;
+- status;
+- title;
+- `why` summary;
+- optional `evidence` lines;
+- optional `fix` remediation;
+- `RelatedChecks` linking it to covered section/check IDs.
+
+Structured findings group gateway authentication, gateway
+network/HTTP/response/model-probe failures, project and IDE gateway validation
+failures, managed-value conflicts, and IDE drift. Any `WARN` or `FAIL` check not
+covered by a finding must still be shown as an uncovered raw check summary.
+`Review details` remains section/check based and includes every diagnostic
+section and check.
+
 ## Diagnostic sections
 
 ### Claude Code CLI
@@ -1039,6 +1059,9 @@ Redact:
 - `x-litellm-api-key: <token>`;
 - `sk-...` token-like values;
 - `ANTHROPIC_AUTH_TOKEN=<value>` and `ANTHROPIC_AUTH_TOKEN: <value>`;
+- generic credential query parameters and assignments named `api_key`,
+  `access_token`, `refresh_token`, `token`, or `x-api-key`, preserving already
+  masked values;
 - token echoes in gateway error details.
 
 Secret value display:

@@ -216,6 +216,46 @@ func TestResolveWindowsUserEnvironmentWinsPersistedResolution(t *testing.T) {
 	}
 }
 
+func TestResolveWithOptionsNewSessionUsesWindowsUserEnvironment(t *testing.T) {
+	fileSystem := newTestFileSystem()
+	fileSystem.addFile(`C:\Users\Ada\.claude\settings.json`, []byte(`{
+		"env": {
+			"ANTHROPIC_BASE_URL": "https://settings.example.com"
+		}
+	}`))
+	windowsEnv := &testWindowsEnvironment{values: map[string]string{
+		"ANTHROPIC_BASE_URL": "https://windows-env.example.com",
+		"ANTHROPIC_MODEL":    "claude-new-session",
+	}}
+
+	read, err := Read(system.System{
+		FS: fileSystem,
+		Env: &testEnvironment{values: map[string]string{
+			"APPDATA":            `C:\Users\Ada\AppData\Roaming`,
+			"ANTHROPIC_BASE_URL": "https://stale-process.example.com",
+			"ANTHROPIC_MODEL":    "claude-stale-process",
+		}},
+		Platform:   testPlatform{targetOS: "windows", home: `C:\Users\Ada`, work: `D:\repo`},
+		WindowsEnv: windowsEnv,
+	}, true)
+	if err != nil {
+		t.Fatalf("Read() error = %v", err)
+	}
+
+	resolved := ResolveWithOptions(read, ResolveOptions{CurrentMode: CurrentModeNewSession})
+	if resolved.Current.Name != "new terminal session" {
+		t.Fatalf("Current.Name = %q, want new terminal session", resolved.Current.Name)
+	}
+	assertResolved(t, resolved.Current, core.VarAnthropicBaseURL, "https://windows-env.example.com", core.SourceWindowsUserEnv)
+	assertResolved(t, resolved.Current, core.VarAnthropicModel, "claude-new-session", core.SourceWindowsUserEnv)
+	if len(resolved.Runtime) != 0 {
+		t.Fatalf("Runtime = %#v, want no process-env differences in new-session mode", resolved.Runtime)
+	}
+	if windowsEnv.snapshots != 1 {
+		t.Fatalf("Windows Snapshot calls = %d, want 1", windowsEnv.snapshots)
+	}
+}
+
 func TestResolveKeepsIDEAndProjectAsSideContexts(t *testing.T) {
 	fileSystem := newTestFileSystem()
 	fileSystem.addFile("/home/ada/.claude/settings.json", []byte(`{

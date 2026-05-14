@@ -47,6 +47,33 @@ func TestAccessibleStartupDeclinePerformsNoReads(t *testing.T) {
 	}
 }
 
+func TestTTYStartupDeclinePerformsNoEnvironmentReads(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix PTY smoke test is skipped on Windows")
+	}
+	pty, err := xpty.NewUnixPty(80, 24)
+	if err != nil {
+		t.Skipf("pty unavailable: %v", err)
+	}
+	defer func() {
+		_ = pty.Close()
+	}()
+
+	sys := testSystem(panicFileSystem{}, nil)
+	sys.Env = panicEnvironment{}
+	sys.Terminal = testTerminal{interactive: true}
+
+	err = Run(context.Background(), Options{
+		System:   sys,
+		Prompter: &scriptedPrompter{responses: []promptResponse{{kind: "confirm", confirm: false}}},
+		Output:   pty.Slave(),
+	})
+
+	if !errors.Is(err, ErrStartupDeclined) {
+		t.Fatalf("Run() error = %v, want ErrStartupDeclined", err)
+	}
+}
+
 func TestAccessibleFreshSetupWritesSelectedTargetsAndRedactsToken(t *testing.T) {
 	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
 	defer server.Close()
@@ -211,7 +238,7 @@ func TestSetupFinalDiagnosticsBypassCachedGatewayFailure(t *testing.T) {
 		Gateway: client,
 		Output:  &output,
 	})
-	if err := runner.applyPlanAndFinalize(context.Background(), plan, []string{values.AuthToken}, setupFinalizationOptions()); err != nil {
+	if err := runner.applyPlanAndFinalize(context.Background(), plan, []string{values.AuthToken}, setupFinalDiagnosticOptions(), true); err != nil {
 		t.Fatalf("applyPlanAndFinalize() error = %v\n%s", err, output.String())
 	}
 
@@ -1531,6 +1558,28 @@ func (i testFileInfo) Sys() any {
 }
 
 type panicFileSystem struct{}
+
+type panicEnvironment struct{}
+
+func (panicEnvironment) Environ() []string {
+	panic("unexpected environ")
+}
+
+func (panicEnvironment) LookupEnv(string) (string, bool) {
+	panic("unexpected lookup env")
+}
+
+func (panicEnvironment) Getenv(string) string {
+	panic("unexpected getenv")
+}
+
+func (panicEnvironment) Setenv(string, string) error {
+	panic("unexpected setenv")
+}
+
+func (panicEnvironment) Unsetenv(string) error {
+	panic("unexpected unsetenv")
+}
 
 func (panicFileSystem) ReadFile(string) ([]byte, error) {
 	panic("unexpected read")

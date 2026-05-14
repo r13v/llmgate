@@ -17,7 +17,7 @@ var (
 	authTokenAssignPattern  = regexp.MustCompile(`(?im)\b(` + core.VarAnthropicAuthToken + `"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,\r\n]+)`)
 	credentialQueryPattern  = regexp.MustCompile(`(?i)([?&;](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token)=)([^&#\s"',;]+)`)
 	credentialAssignPattern = regexp.MustCompile(
-		`(?im)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|x-api-key)"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,&\r\n]+)`,
+		`(?im)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|x-api-key)"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,&\r\n]+)`,
 	)
 	skTokenPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]*\b`)
 )

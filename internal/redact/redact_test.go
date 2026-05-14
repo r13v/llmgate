@@ -82,7 +82,10 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 	input := strings.Join([]string{
 		"https://gateway.example.com/v1/models?api_key=plain-api-key-1234&token=query-token-5678#fragment",
 		"body api_key=body-api-key-2468",
+		"body token=body-token-1122",
+		"body token: colon-token-3344",
 		`{"access_token":"json-access-token-1357"}`,
+		`{"token":"json-token-9753"}`,
 		"refresh_token: refresh-token-8642",
 	}, "\n")
 
@@ -91,7 +94,10 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 		"plain-api-key-1234",
 		"query-token-5678",
 		"body-api-key-2468",
+		"body-token-1122",
+		"colon-token-3344",
 		"json-access-token-1357",
+		"json-token-9753",
 		"refresh-token-8642",
 	} {
 		if strings.Contains(got, notWant) {
@@ -102,7 +108,10 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 		"api_key=***1234",
 		"token=***5678",
 		"api_key=***2468",
+		"token=***1122",
+		"token: ***3344",
 		`"access_token":"***1357"`,
+		`"token":"***9753"`,
 		"refresh_token: ***8642",
 	} {
 		if !strings.Contains(got, want) {

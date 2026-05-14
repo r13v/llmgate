@@ -306,6 +306,19 @@ func TestSanitizedDetailsAreTruncated(t *testing.T) {
 	}
 }
 
+func TestSanitizedDetailsRedactGenericTokenFields(t *testing.T) {
+	const upstreamToken = "upstream-token-1234"
+
+	detail := sanitizedResponseDetail([]byte(`{"token":"`+upstreamToken+`","reason":"bad credentials"}`), "configured-token-5678")
+
+	if strings.Contains(detail, upstreamToken) {
+		t.Fatalf("detail leaked generic token field: %q", detail)
+	}
+	if !strings.Contains(detail, `"token":"***1234"`) {
+		t.Fatalf("detail = %q, want masked token field", detail)
+	}
+}
+
 func TestExplainFailureUsesStructuredGatewayError(t *testing.T) {
 	err := &Error{
 		Kind:       FailureAuth,

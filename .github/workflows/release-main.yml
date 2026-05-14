@@ -64,6 +64,7 @@ jobs:
             gh release edit main \
               --title "main" \
               --notes-file "$RUNNER_TEMP/main-release-notes.md" \
+              --draft=false \
               --prerelease \
               --latest=false \
               --target "${GITHUB_SHA}"

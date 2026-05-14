@@ -186,6 +186,28 @@ func TestAcceptanceGatewayAndModelSelectionScenarios(t *testing.T) {
 		assertFileNotContains(t, edit.fs, "/home/ada/.claude/settings.json", "sk-bad-token-1234567890")
 	})
 
+	t.Run("finding summary keeps uncovered model warning visible", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.claude/settings.json", fullClaudeSettingsWithModel(h.gateway.url(), missingModel), 0o600)
+		h.fs.addFile("/home/ada/.zshrc", []byte("export ANTHROPIC_AUTH_TOKEN='"+altTestToken+"'\n"), 0o600)
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "exit"},
+		})
+		if err != nil {
+			t.Fatalf("Run() error = %v\n%s", err, output)
+		}
+
+		assertContains(t, output, "WARN Config: ANTHROPIC_AUTH_TOKEN differs across sources")
+		assertContains(t, output, "ANTHROPIC_MODEL model is unavailable")
+		assertContains(t, output, "Primary Claude Code model")
+		assertNotContains(t, output, "[Config Source Conflicts / ANTHROPIC_AUTH_TOKEN]")
+		if h.fs.mutationOps() != 0 {
+			t.Fatalf("diagnostic exit wrote filesystem %d time(s)\n%s", h.fs.mutationOps(), output)
+		}
+	})
+
 	t.Run("manual advanced models unavailable and probe failure block writes", func(t *testing.T) {
 		manual := newHarness(t)
 		output, err := manual.runScripted([]promptResponse{

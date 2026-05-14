@@ -409,26 +409,81 @@ func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 	display := displayOptions{HomeDir: result.Read.Paths.HomeDir, GOOS: result.Read.Paths.GOOS}
 	knownSecrets := diagnose.KnownSecrets(result)
 	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, colorStatus(result.Status(), r.color))
-	for _, section := range result.Sections {
+
+	findings := actionableFindings(result.Findings)
+	if len(findings) > 0 {
+		r.printDiagnosticFindings(findings, knownSecrets, display)
+		covered := diagnose.CoveredCheckIDs(findings)
+		r.printDiagnosticChecks(result.Sections, knownSecrets, display, covered, true)
+		return
+	}
+
+	r.printDiagnosticChecks(result.Sections, knownSecrets, display, nil, false)
+}
+
+func (r runner) printDiagnosticFindings(findings []core.DiagnosticFinding, knownSecrets []string, display displayOptions) {
+	for _, finding := range diagnose.OrderedFindings(findings) {
+		title := finding.Title
+		if title == "" {
+			title = finding.Summary
+		}
+		title = sanitizeSummaryLine(title, knownSecrets, display)
+		_, _ = fmt.Fprintf(r.out, "- %s %s\n", colorStatus(finding.Status, r.color), title)
+
+		summary := sanitizeSummaryLine(finding.Summary, knownSecrets, display)
+		if summary != "" && summary != title {
+			_, _ = fmt.Fprintf(r.out, "  why: %s\n", summary)
+		}
+		for _, evidence := range finding.Evidence {
+			evidence = sanitizeSummaryLine(evidence, knownSecrets, display)
+			if evidence == "" {
+				continue
+			}
+			_, _ = fmt.Fprintf(r.out, "  evidence: %s\n", evidence)
+		}
+		remediation := sanitizeSummaryLine(finding.Remediation, knownSecrets, display)
+		if remediation != "" {
+			_, _ = fmt.Fprintf(r.out, "  fix: %s\n", remediation)
+		}
+	}
+}
+
+func (r runner) printDiagnosticChecks(sections []core.DiagnosticSection, knownSecrets []string, display displayOptions, covered map[string]bool, short bool) {
+	for _, section := range sections {
 		for _, check := range section.Checks {
 			if check.Status != core.StatusWARN && check.Status != core.StatusFAIL {
+				continue
+			}
+			if covered != nil && covered[check.ID] {
 				continue
 			}
 			summary := check.Summary
 			if summary == "" {
 				summary = check.Title
 			}
-			summary = sanitizeText(summary, knownSecrets, display)
+			summary = sanitizeDiagnosticLine(summary, knownSecrets, display, short)
 			location := diagnosticLocation(section.Title, check.Title, summary)
-			_, _ = fmt.Fprintf(r.out, "- %s [%s] %s\n", colorStatus(check.Status, r.color), sanitizeText(location, knownSecrets, display), summary)
+			_, _ = fmt.Fprintf(r.out, "- %s [%s] %s\n", colorStatus(check.Status, r.color), sanitizeDiagnosticLine(location, knownSecrets, display, short), summary)
 			for _, detail := range check.Details {
+				detail = sanitizeDiagnosticLine(detail, knownSecrets, display, short)
 				if detail == "" {
 					continue
 				}
-				_, _ = fmt.Fprintf(r.out, "  - %s\n", sanitizeText(detail, knownSecrets, display))
+				_, _ = fmt.Fprintf(r.out, "  - %s\n", detail)
 			}
 		}
 	}
+}
+
+func actionableFindings(findings []core.DiagnosticFinding) []core.DiagnosticFinding {
+	actionable := make([]core.DiagnosticFinding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Status != core.StatusWARN && finding.Status != core.StatusFAIL {
+			continue
+		}
+		actionable = append(actionable, finding)
+	}
+	return actionable
 }
 
 func diagnosticLocation(sectionTitle, checkTitle, summary string) string {
@@ -526,4 +581,23 @@ func sanitizeText(value string, knownSecrets []string, display displayOptions) s
 		HomeDir:      display.HomeDir,
 		GOOS:         display.GOOS,
 	})
+}
+
+func sanitizeSummaryLine(value string, knownSecrets []string, display displayOptions) string {
+	value = strings.TrimSpace(sanitizeText(value, knownSecrets, display))
+	if value == "" {
+		return ""
+	}
+	const maxSummaryLineLen = 180
+	if len(value) <= maxSummaryLineLen {
+		return value
+	}
+	return value[:maxSummaryLineLen-3] + "..."
+}
+
+func sanitizeDiagnosticLine(value string, knownSecrets []string, display displayOptions, short bool) string {
+	if short {
+		return sanitizeSummaryLine(value, knownSecrets, display)
+	}
+	return sanitizeText(value, knownSecrets, display)
 }

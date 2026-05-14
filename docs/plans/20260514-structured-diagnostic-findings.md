@@ -134,16 +134,16 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 - Modify: `internal/e2e/wizard_accessible_test.go`
 - Modify: `internal/e2e/acceptance_test.go`
 
-- [ ] Render structured findings first when findings are present.
-- [ ] Use `RelatedChecks` coverage to append uncovered WARN/FAIL checks after findings so legacy or not-yet-specialized diagnostics remain visible.
-- [ ] Use concise first lines such as `FAIL Gateway: token rejected` and `WARN Config: ANTHROPIC_AUTH_TOKEN differs across sources`.
-- [ ] Render evidence under each finding with short lines only: effective source, differing sources, request URL, HTTP status, and sanitized gateway message.
-- [ ] Render remediation lines separately from evidence, for example `fix: update the active token in ~/.zshrc or choose one source of truth`.
-- [ ] Fall back to the existing check-based summary when findings are unavailable.
-- [ ] Ensure color is applied only to status/message types on real TTY output and never in accessible scripted output.
-- [ ] Add tests matching the screenshot scenario and asserting grouped output rather than repeated raw checks.
-- [ ] Add tests proving an uncovered CLI warning, source issue, model warning, or probe failure still appears when at least one finding exists.
-- [ ] Run focused wizard and e2e tests before next task.
+- [x] Render structured findings first when findings are present.
+- [x] Use `RelatedChecks` coverage to append uncovered WARN/FAIL checks after findings so legacy or not-yet-specialized diagnostics remain visible.
+- [x] Use concise first lines such as `FAIL Gateway: token rejected` and `WARN Config: ANTHROPIC_AUTH_TOKEN differs across sources`.
+- [x] Render evidence under each finding with short lines only: effective source, differing sources, request URL, HTTP status, and sanitized gateway message.
+- [x] Render remediation lines separately from evidence, for example `fix: update the active token in ~/.zshrc or choose one source of truth`.
+- [x] Fall back to the existing check-based summary when findings are unavailable.
+- [x] Ensure color is applied only to status/message types on real TTY output and never in accessible scripted output.
+- [x] Add tests matching the screenshot scenario and asserting grouped output rather than repeated raw checks.
+- [x] Add tests proving an uncovered CLI warning, source issue, model warning, or probe failure still appears when at least one finding exists.
+- [x] Run focused wizard and e2e tests before next task.
 
 ### Task 5: Preserve Full Details And Recovery Prompt Quality
 **Files:**

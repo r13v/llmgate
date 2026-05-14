@@ -202,6 +202,104 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	assertContains(t, rendered, "reason: model probe failed")
 }
 
+func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-summary-secret-1234567890"
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Sections: []core.DiagnosticSection{
+			{
+				Title: "Gateway",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "gateway.validation",
+					Status:  core.StatusFAIL,
+					Title:   "Gateway validation",
+					Summary: "gateway validation failed",
+					Details: []string{"raw gateway detail for " + token},
+				}},
+			},
+			{
+				Title: "Claude Code CLI",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "claude-cli.version",
+					Status:  core.StatusWARN,
+					Title:   "claude --version",
+					Summary: "Claude Code CLI check failed",
+					Details: []string{"exit status 127"},
+				}},
+			},
+		},
+		Findings: []core.DiagnosticFinding{{
+			ID:      "gateway.current",
+			Status:  core.StatusFAIL,
+			Title:   "Gateway: token rejected",
+			Summary: "The gateway rejected ANTHROPIC_AUTH_TOKEN.",
+			Evidence: []string{
+				"request URL: https://gateway.example.com/v1/models?api_key=" + token,
+				"HTTP status: 401",
+				"gateway message: gateway rejected token " + token + " " + strings.Repeat("x", 240),
+			},
+			Remediation:   "Update the active token in ~/.zshrc or choose one source of truth.",
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertContains(t, rendered, "Initial diagnostics: FAIL")
+	assertContains(t, rendered, "- FAIL Gateway: token rejected")
+	assertContains(t, rendered, "why: The gateway rejected ANTHROPIC_AUTH_TOKEN.")
+	assertContains(t, rendered, "evidence: request URL: https://gateway.example.com/v1/models")
+	assertContains(t, rendered, "evidence: HTTP status: 401")
+	assertContains(t, rendered, "fix: Update the active token")
+	assertContains(t, rendered, "- WARN [Claude Code CLI / claude --version] Claude Code CLI check failed")
+	assertContains(t, rendered, "exit status 127")
+	assertNotContains(t, rendered, "gateway validation failed")
+	assertNotContains(t, rendered, "raw gateway detail")
+	assertNotContains(t, rendered, token)
+
+	if strings.Index(rendered, "Gateway: token rejected") > strings.Index(rendered, "Claude Code CLI check failed") {
+		t.Fatalf("finding rendered after uncovered check:\n%s", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "gateway message:") && len(line) > 200 {
+			t.Fatalf("gateway evidence line too long (%d chars): %q", len(line), line)
+		}
+	}
+}
+
+func TestDiagnosticSummaryColorsOnlyStatusTokens(t *testing.T) {
+	var output bytes.Buffer
+	result := diagnose.Result{
+		Read: configReadForSummary("sk-color-secret-1234567890"),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Status:  core.StatusFAIL,
+				Title:   "Gateway validation",
+				Summary: "gateway validation failed",
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:            "gateway.current",
+			Status:        core.StatusFAIL,
+			Title:         "Gateway: token rejected",
+			Summary:       "The gateway rejected ANTHROPIC_AUTH_TOKEN.",
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output, color: true}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertContains(t, rendered, "Initial diagnostics: \x1b[31mFAIL\x1b[0m")
+	assertContains(t, rendered, "- \x1b[31mFAIL\x1b[0m Gateway: token rejected")
+	assertNotContains(t, rendered, "\x1b[31mGateway")
+	assertNotContains(t, rendered, "\x1b[31mThe gateway")
+}
+
 func TestProgressReporterIsSilentForNonTerminalOutput(t *testing.T) {
 	var output bytes.Buffer
 	reporter := newProgressReporter(&output, &testEnvironment{values: map[string]string{"TERM": "xterm-256color"}}, false)

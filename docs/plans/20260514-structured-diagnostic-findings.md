@@ -116,16 +116,16 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 - Modify: `internal/diagnose/diagnose_test.go`
 - Modify: `internal/diagnose/report_test.go`
 
-- [ ] Extend `diagnose.Result` to include `Findings []core.DiagnosticFinding`.
-- [ ] Build gateway findings from `contextEvaluation.gatewayErr` and probe errors using `gateway.Error` structure.
-- [ ] Refactor project/IDE side-context validation so structured gateway failures are retained as side-validation results or converted into findings before only check-shaped data remains.
-- [ ] Build side-context gateway findings for project settings, Cursor settings, and VS Code settings when their gateway validation fails.
-- [ ] Build token conflict findings from `config.ConflictIssue`, grouping by managed variable and summarizing number of distinct values and involved sources.
-- [ ] Build IDE drift findings from `config.SideContextDifference`, grouping repeated IDE token differences across Cursor and VS Code.
-- [ ] Build connected findings when gateway auth fails and token conflicts or IDE drift involve `ANTHROPIC_AUTH_TOKEN`.
-- [ ] Keep existing sections/checks intact for full report rendering and backward-compatible tests.
-- [ ] Add tests for gateway-only, side-context-gateway-only, conflict-only, IDE-only, and combined gateway-auth-plus-token-conflict cases.
-- [ ] Run focused diagnose tests before next task.
+- [x] Extend `diagnose.Result` to include `Findings []core.DiagnosticFinding`.
+- [x] Build gateway findings from `contextEvaluation.gatewayErr` and probe errors using `gateway.Error` structure.
+- [x] Refactor project/IDE side-context validation so structured gateway failures are retained as side-validation results or converted into findings before only check-shaped data remains.
+- [x] Build side-context gateway findings for project settings, Cursor settings, and VS Code settings when their gateway validation fails.
+- [x] Build token conflict findings from `config.ConflictIssue`, grouping by managed variable and summarizing number of distinct values and involved sources.
+- [x] Build IDE drift findings from `config.SideContextDifference`, grouping repeated IDE token differences across Cursor and VS Code.
+- [x] Build connected findings when gateway auth fails and token conflicts or IDE drift involve `ANTHROPIC_AUTH_TOKEN`.
+- [x] Keep existing sections/checks intact for full report rendering and backward-compatible tests.
+- [x] Add tests for gateway-only, side-context-gateway-only, conflict-only, IDE-only, and combined gateway-auth-plus-token-conflict cases.
+- [x] Run focused diagnose tests before next task.
 
 ### Task 4: Render Actionable Wizard Summary With Uncovered Check Fallback
 **Files:**

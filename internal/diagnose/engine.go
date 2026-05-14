@@ -22,6 +22,7 @@ type Options struct {
 
 type Result struct {
 	Sections                          []core.DiagnosticSection
+	Findings                          []core.DiagnosticFinding
 	Read                              config.ReadResult
 	Resolution                        config.Resolution
 	RepairableStaleShellModelWarnings []RepairableStaleShellModelWarning
@@ -55,6 +56,7 @@ func Run(ctx context.Context, sys system.System, read config.ReadResult, opts Op
 	}
 	result.Sections = append(result.Sections, buildProjectOverrideSection(resolution.ProjectOverrides))
 
+	var sideGatewayFailures []sideGatewayFailure
 	for _, evaluation := range evaluations {
 		result.Sections = append(result.Sections, buildGatewaySection(evaluation, multipleContexts, hasOtherUsable(evaluations, evaluation.name)))
 	}
@@ -69,13 +71,16 @@ func Run(ctx context.Context, sys system.System, read config.ReadResult, opts Op
 	if section, ok := buildIDEConfigSection(read, resolution.IDEDrift); ok {
 		result.Sections = append(result.Sections, section)
 	}
-	if section, ok := buildProjectConfigValidationSection(ctx, read, resolution, opts); ok {
+	if section, failures, ok := buildProjectConfigValidationSection(ctx, read, resolution, opts); ok {
 		result.Sections = append(result.Sections, section)
+		sideGatewayFailures = append(sideGatewayFailures, failures...)
 	}
-	if section, ok := buildIDEConfigValidationSection(ctx, read, resolution, opts); ok {
+	if section, failures, ok := buildIDEConfigValidationSection(ctx, read, resolution, opts); ok {
 		result.Sections = append(result.Sections, section)
+		sideGatewayFailures = append(sideGatewayFailures, failures...)
 	}
 	result.Sections = append(result.Sections, buildWriteTargetsSection(read.WriteTargets))
+	result.Findings = buildDiagnosticFindings(resolution, evaluations, sideGatewayFailures, multipleContexts)
 
 	return result, nil
 }
@@ -264,50 +269,60 @@ func repairableStaleShellModel(model modelEvaluation, current core.ResolvedConfi
 	}, true
 }
 
-func buildProjectConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, bool) {
+func buildProjectConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, []sideGatewayFailure, bool) {
 	if !opts.NetworkChecks {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	sources := orderedSideSources(read.Sources, core.SourceProjectLocalSettings, core.SourceProjectSettings)
 	if len(sources) == 0 {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	checks := make([]core.DiagnosticCheck, 0)
+	var failures []sideGatewayFailure
 	for _, source := range sources {
 		side := sideContextFromSource(source, resolution.Current)
-		checks = append(checks, validateSideContext(ctx, side, opts, "project")...)
+		validation := validateSideContext(ctx, side, opts, "project")
+		checks = append(checks, validation.Checks...)
+		if validation.GatewayFailure != nil {
+			failures = append(failures, *validation.GatewayFailure)
+		}
 	}
 
 	return core.DiagnosticSection{
 		ID:     sectionProjectConfigValidation,
 		Title:  "Project Config Validation",
 		Checks: checks,
-	}, true
+	}, failures, true
 }
 
-func buildIDEConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, bool) {
+func buildIDEConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, []sideGatewayFailure, bool) {
 	if !opts.NetworkChecks {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	sources := orderedSideSources(read.Sources, core.SourceVSCodeSettings, core.SourceCursorSettings)
 	if len(sources) == 0 {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	checks := make([]core.DiagnosticCheck, 0)
+	var failures []sideGatewayFailure
 	for _, source := range sources {
 		side := sideContextFromSource(source, resolution.Current)
-		checks = append(checks, validateSideContext(ctx, side, opts, "IDE")...)
+		validation := validateSideContext(ctx, side, opts, "IDE")
+		checks = append(checks, validation.Checks...)
+		if validation.GatewayFailure != nil {
+			failures = append(failures, *validation.GatewayFailure)
+		}
 	}
 
 	return core.DiagnosticSection{
 		ID:     sectionIDEConfigValidation,
 		Title:  "IDE Config Validation",
 		Checks: checks,
-	}, true
+	}, failures, true
 }
 
 func sideContextFromSource(source config.Source, global core.ResolvedConfig) sideValidationContext {
@@ -358,26 +373,35 @@ func sideContextFromSource(source config.Source, global core.ResolvedConfig) sid
 	}
 }
 
-func validateSideContext(ctx context.Context, side sideValidationContext, opts Options, label string) []core.DiagnosticCheck {
+func validateSideContext(ctx context.Context, side sideValidationContext, opts Options, label string) sideValidationResult {
 	if side.token == "" || side.baseURL == "" {
-		return []core.DiagnosticCheck{{
+		return sideValidationResult{Checks: []core.DiagnosticCheck{{
 			ID:      sideCheckID(label, side.source, "credentials"),
 			Title:   side.name,
 			Status:  core.StatusWARN,
 			Summary: fmt.Sprintf("%s gateway credentials are insufficient for validation", label),
 			Details: sideCredentialDetails(side),
-		}}
+		}}}
 	}
 
 	modelList, err := opts.Gateway.ListModels(ctx, side.baseURL, side.token, gateway.RequestOptions{})
 	if err != nil {
-		return []core.DiagnosticCheck{{
-			ID:      sideCheckID(label, side.source, "gateway"),
-			Title:   side.name,
-			Status:  core.StatusWARN,
-			Summary: fmt.Sprintf("%s gateway validation failed", label),
-			Details: gatewayFailureDetails(err),
-		}}
+		checkID := sideCheckID(label, side.source, "gateway")
+		return sideValidationResult{
+			Checks: []core.DiagnosticCheck{{
+				ID:      checkID,
+				Title:   side.name,
+				Status:  core.StatusWARN,
+				Summary: fmt.Sprintf("%s gateway validation failed", label),
+				Details: gatewayFailureDetails(err),
+			}},
+			GatewayFailure: &sideGatewayFailure{
+				Source:  side.source,
+				Name:    side.name,
+				Err:     err,
+				CheckID: checkID,
+			},
+		}
 	}
 
 	checks := []core.DiagnosticCheck{{
@@ -396,7 +420,7 @@ func validateSideContext(ctx context.Context, side sideValidationContext, opts O
 			Status:  core.StatusOK,
 			Summary: fmt.Sprintf("%s has no model override to validate", label),
 		})
-		return checks
+		return sideValidationResult{Checks: checks}
 	}
 	for _, model := range side.models {
 		status := core.StatusOK
@@ -413,7 +437,7 @@ func validateSideContext(ctx context.Context, side sideValidationContext, opts O
 			Details: []string{"model: " + displayValue(model.Value, model.Secret), "source: " + model.Source.String()},
 		})
 	}
-	return checks
+	return sideValidationResult{Checks: checks}
 }
 
 func sideCredentialDetails(side sideValidationContext) []string {

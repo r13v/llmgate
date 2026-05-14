@@ -88,6 +88,18 @@ type sideValidationContext struct {
 	baseURL string
 }
 
+type sideValidationResult struct {
+	Checks         []core.DiagnosticCheck
+	GatewayFailure *sideGatewayFailure
+}
+
+type sideGatewayFailure struct {
+	Source  core.SourceLabel
+	Name    string
+	Err     error
+	CheckID string
+}
+
 func buildClaudeConfigSection(resolution config.Resolution) core.DiagnosticSection {
 	checks := make([]core.DiagnosticCheck, 0, len(core.RequiredValues))
 	for _, required := range core.RequiredValues {
@@ -151,7 +163,7 @@ func buildConflictSection(conflicts []config.ConflictIssue) (core.DiagnosticSect
 		}
 
 		checks = append(checks, core.DiagnosticCheck{
-			ID:      fmt.Sprintf("config-conflict.%02d.%s", i+1, conflict.Name),
+			ID:      conflictCheckID(i, conflict.Name),
 			Title:   conflict.Name,
 			Status:  conflict.Status,
 			Summary: conflict.Summary,
@@ -434,7 +446,7 @@ func buildIDEConfigSection(read config.ReadResult, differences []config.SideCont
 			details = append(details, "global "+difference.ComparedAgainst+": <unset>")
 		}
 		checks = append(checks, core.DiagnosticCheck{
-			ID:      fmt.Sprintf("ide-config.%02d.%s", i+1, difference.Name),
+			ID:      ideDriftCheckID(i, difference.Name),
 			Title:   difference.Name,
 			Status:  core.StatusWARN,
 			Summary: fmt.Sprintf("%s differs in IDE settings", difference.Name),

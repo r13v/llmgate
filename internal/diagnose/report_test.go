@@ -42,3 +42,35 @@ func TestRenderRedactsSecretsAndShortensHomePath(t *testing.T) {
 		t.Fatalf("report header format changed:\n%s", report)
 	}
 }
+
+func TestRenderKeepsFullReportCheckBasedWhenFindingsExist(t *testing.T) {
+	result := Result{
+		Sections: []core.DiagnosticSection{{
+			ID:    "gateway",
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Title:   "Gateway validation",
+				Status:  core.StatusFAIL,
+				Summary: "gateway validation failed",
+				Details: []string{"reason: full gateway evidence"},
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:          "gateway.current",
+			Status:      core.StatusFAIL,
+			Title:       "Gateway: token rejected",
+			Summary:     "The short finding summary should stay out of Review details for now.",
+			Evidence:    []string{"HTTP status: 401"},
+			Remediation: "Update the active token.",
+		}},
+	}
+
+	report := Render(result, RenderOptions{})
+	if !strings.Contains(report, "gateway validation failed") || !strings.Contains(report, "reason: full gateway evidence") {
+		t.Fatalf("report lost check details:\n%s", report)
+	}
+	if strings.Contains(report, "Gateway: token rejected") || strings.Contains(report, "The short finding summary") {
+		t.Fatalf("report rendered findings before full-report support was added:\n%s", report)
+	}
+}

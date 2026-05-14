@@ -35,6 +35,9 @@ func TestRunAggregatesOKAndSKIP(t *testing.T) {
 	if got := okResult.Status(); got != core.StatusOK {
 		t.Fatalf("network-enabled status = %s, want OK\n%s", got, Render(okResult, RenderOptions{}))
 	}
+	if len(okResult.Findings) != 0 {
+		t.Fatalf("network-enabled findings = %#v, want none", okResult.Findings)
+	}
 	if !sectionStatus(okResult, "Gateway", core.StatusOK) {
 		t.Fatalf("Gateway section was not OK:\n%s", Render(okResult, RenderOptions{}))
 	}
@@ -45,6 +48,9 @@ func TestRunAggregatesOKAndSKIP(t *testing.T) {
 	}
 	if got := skipResult.Status(); got != core.StatusSKIP {
 		t.Fatalf("network-disabled status = %s, want SKIP\n%s", got, Render(skipResult, RenderOptions{}))
+	}
+	if len(skipResult.Findings) != 0 {
+		t.Fatalf("network-disabled findings = %#v, want none", skipResult.Findings)
 	}
 	if !sectionStatus(skipResult, "Gateway", core.StatusSKIP) {
 		t.Fatalf("Gateway section was not SKIP:\n%s", Render(skipResult, RenderOptions{}))
@@ -129,6 +135,18 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 	if strings.Contains(rendered, "sk-badtoken1234") {
 		t.Fatalf("gateway failure details leaked token:\n%s", rendered)
 	}
+
+	finding := requireFinding(t, result, "gateway.current")
+	if finding.Status != core.StatusFAIL || finding.Title != "Gateway: token rejected" {
+		t.Fatalf("gateway finding = %#v, want FAIL token rejected", finding)
+	}
+	assertContains(t, finding.RelatedChecks, "gateway.validation.current-environment")
+	assertContains(t, finding.Evidence, "request URL: "+server.URL+"/v1/models")
+	assertContains(t, finding.Evidence, "failure kind: auth")
+	assertContains(t, finding.Evidence, "HTTP status: 401")
+	if strings.Contains(strings.Join(finding.Evidence, "\n"), "sk-badtoken1234") {
+		t.Fatalf("gateway finding leaked token: %#v", finding.Evidence)
+	}
 }
 
 func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testing.T) {
@@ -153,6 +171,13 @@ func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testin
 	if !checkSummaryStatus(result, "Model Probes", `probe failed for model "claude-probe-fail"`, core.StatusFAIL) {
 		t.Fatalf("available model probe failure was not reported:\n%s", Render(result, RenderOptions{}))
 	}
+	finding := requireFinding(t, result, "gateway.probe.current.claude-probe-fail")
+	if finding.Title != "Gateway: model probe failed" {
+		t.Fatalf("probe finding title = %q, want Gateway: model probe failed", finding.Title)
+	}
+	assertContains(t, finding.RelatedChecks, "model-probes.claude-probe-fail")
+	assertContains(t, finding.Evidence, `subject: model "claude-probe-fail"`)
+	assertContains(t, finding.Evidence, "HTTP status: 400")
 }
 
 func TestRunReportsConfigSourceConflictsWithRedaction(t *testing.T) {
@@ -201,6 +226,20 @@ func TestRunReportsConfigSourceConflictsWithRedaction(t *testing.T) {
 			t.Fatalf("conflict report leaked secret %q:\n%s", secret, rendered)
 		}
 	}
+
+	finding := requireFinding(t, result, "config-conflict.anthropic-auth-token")
+	if finding.Status != core.StatusWARN || finding.Title != "Config: ANTHROPIC_AUTH_TOKEN differs across sources" {
+		t.Fatalf("token conflict finding = %#v, want grouped WARN", finding)
+	}
+	if !strings.Contains(finding.Summary, "2 distinct values") {
+		t.Fatalf("token conflict summary = %q, want distinct value count", finding.Summary)
+	}
+	assertContains(t, finding.RelatedChecks, "config-conflict.01.ANTHROPIC_AUTH_TOKEN")
+	assertContains(t, finding.Evidence, "distinct values: 2")
+	if strings.Contains(strings.Join(finding.Evidence, "\n"), "sk-claudeconflict1234") ||
+		strings.Contains(strings.Join(finding.Evidence, "\n"), "sk-shellconflict5678") {
+		t.Fatalf("token conflict finding leaked secret values: %#v", finding.Evidence)
+	}
 }
 
 func TestProjectAndIDEValidationWarnSeparately(t *testing.T) {
@@ -229,6 +268,100 @@ func TestProjectAndIDEValidationWarnSeparately(t *testing.T) {
 	if !checkSummaryStatus(result, "IDE Config Validation", "ANTHROPIC_MODEL model is unavailable", core.StatusWARN) {
 		t.Fatalf("IDE unavailable selected model warning missing:\n%s", Render(result, RenderOptions{}))
 	}
+}
+
+func TestRunBuildsSideContextGatewayFindings(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-3-haiku", "claude-3-sonnet", "claude-3-opus"})
+	defer server.Close()
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceProjectLocalSettings, Path: "/home/ada/project/.claude/settings.local.json"}, allRequiredValues("sk-projectbad1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceCursorSettings, Path: "/home/ada/.config/Cursor/User/settings.json"}, allRequiredValues("sk-cursorbad1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: "/home/ada/.config/Code/User/settings.json"}, allRequiredValues("sk-vscodebad1234", server.URL, "claude-3-sonnet"), ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		id      string
+		title   string
+		checkID string
+	}{
+		{"gateway.side.project-local-settings", "Project gateway: token rejected", "project.project_local_settings.gateway"},
+		{"gateway.side.cursor-settings", "Cursor gateway: token rejected", "IDE.cursor_settings.gateway"},
+		{"gateway.side.vscode-settings", "VS Code gateway: token rejected", "IDE.vscode_settings.gateway"},
+	} {
+		finding := requireFinding(t, result, tc.id)
+		if finding.Status != core.StatusWARN || finding.Title != tc.title {
+			t.Fatalf("%s finding = %#v, want WARN %q", tc.id, finding, tc.title)
+		}
+		assertContains(t, finding.RelatedChecks, tc.checkID)
+		assertContains(t, finding.Evidence, "failure kind: auth")
+		assertContains(t, finding.Evidence, "HTTP status: 401")
+	}
+}
+
+func TestRunBuildsGroupedIDEDriftFinding(t *testing.T) {
+	currentValues := map[string]string{core.VarAnthropicAuthToken: "sk-terminaltoken1234"}
+	cursorValues := map[string]string{core.VarAnthropicAuthToken: "sk-cursortoken1234"}
+	vscodeValues := map[string]string{core.VarAnthropicAuthToken: "sk-vscodetoken1234"}
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceCurrentEnv}, currentValues, ""),
+		testSource(core.SourceLabel{Kind: core.SourceCursorSettings, Path: "/home/ada/.config/Cursor/User/settings.json"}, cursorValues, ""),
+		testSource(core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: "/home/ada/.config/Code/User/settings.json"}, vscodeValues, ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{NetworkChecks: false})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	finding := requireFinding(t, result, "ide-drift.anthropic-auth-token")
+	if finding.Status != core.StatusWARN || finding.Title != "IDE: ANTHROPIC_AUTH_TOKEN differs from terminal" {
+		t.Fatalf("IDE drift finding = %#v, want grouped WARN", finding)
+	}
+	if !strings.Contains(finding.Summary, "2 IDE sources") {
+		t.Fatalf("IDE drift summary = %q, want grouped IDE sources", finding.Summary)
+	}
+	assertContains(t, finding.RelatedChecks, "ide-config.01.ANTHROPIC_AUTH_TOKEN")
+	assertContains(t, finding.RelatedChecks, "ide-config.02.ANTHROPIC_AUTH_TOKEN")
+	assertContains(t, finding.Evidence, "distinct IDE values: 2")
+}
+
+func TestRunConnectsGatewayAuthFindingToTokenConflict(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-3-sonnet"})
+	defer server.Close()
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, allRequiredValues("sk-claudebad1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceShellProfile, Path: "/home/ada/.zshrc"}, allRequiredValues("sk-shellbad5678", server.URL, "claude-3-sonnet"), ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	gatewayFinding := requireFinding(t, result, "gateway.current")
+	if !strings.Contains(gatewayFinding.Summary, "configured token values differ") {
+		t.Fatalf("gateway finding summary = %q, want token conflict connection", gatewayFinding.Summary)
+	}
+	assertContains(t, gatewayFinding.RelatedChecks, "gateway.validation.current-environment")
+	assertContains(t, gatewayFinding.RelatedChecks, "config-conflict.01.ANTHROPIC_AUTH_TOKEN")
+	assertContains(t, gatewayFinding.Evidence, "related config: ANTHROPIC_AUTH_TOKEN differs across Claude Code user settings (/home/ada/.claude/settings.json), terminal shell profile (/home/ada/.zshrc)")
+
+	conflictFinding := requireFinding(t, result, "config-conflict.anthropic-auth-token")
+	assertContains(t, conflictFinding.RelatedChecks, "config-conflict.01.ANTHROPIC_AUTH_TOKEN")
 }
 
 func TestRunReportsCommandFailureAsWarning(t *testing.T) {
@@ -422,4 +555,25 @@ func checkSummaryStatus(result Result, sectionTitle, summary string, status core
 		}
 	}
 	return false
+}
+
+func requireFinding(t *testing.T, result Result, id string) core.DiagnosticFinding {
+	t.Helper()
+	for _, finding := range result.Findings {
+		if finding.ID == id {
+			return finding
+		}
+	}
+	t.Fatalf("finding %q not found in %#v", id, result.Findings)
+	return core.DiagnosticFinding{}
+}
+
+func assertContains(t *testing.T, values []string, want string) {
+	t.Helper()
+	for _, value := range values {
+		if value == want {
+			return
+		}
+	}
+	t.Fatalf("%#v does not contain %q", values, want)
 }

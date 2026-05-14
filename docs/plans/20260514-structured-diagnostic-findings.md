@@ -88,10 +88,12 @@
 - Modify: `internal/wizard/progress.go`
 - Modify: related tests touched in current WIP
 
-- [ ] Review the current uncommitted color/progress/gateway-detail changes and decide which pieces stay as-is, move into findings, or get simplified.
-- [ ] Keep terminal progress/spinner behavior if tests confirm it does not pollute scripted or non-TTY output.
-- [ ] Keep full gateway evidence generation, but prepare to render it through findings rather than directly in the first wizard summary.
-- [ ] Run focused tests for `internal/diagnose` and `internal/wizard`.
+Decision note: the working tree had no uncommitted WIP to reconcile. Keep the existing terminal-only progress/color helpers and full gateway evidence details in diagnostic checks. Defer structured first-screen rendering to the findings tasks instead of introducing a partial finding model here.
+
+- [x] Review the current uncommitted color/progress/gateway-detail changes and decide which pieces stay as-is, move into findings, or get simplified.
+- [x] Keep terminal progress/spinner behavior if tests confirm it does not pollute scripted or non-TTY output.
+- [x] Keep full gateway evidence generation, but prepare to render it through findings rather than directly in the first wizard summary.
+- [x] Run focused tests for `internal/diagnose` and `internal/wizard`.
 
 ### Task 2: Add Lean Finding Domain Model
 **Files:**

@@ -202,6 +202,44 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	assertContains(t, rendered, "reason: model probe failed")
 }
 
+func TestProgressReporterIsSilentForNonTerminalOutput(t *testing.T) {
+	var output bytes.Buffer
+	reporter := newProgressReporter(&output, &testEnvironment{values: map[string]string{"TERM": "xterm-256color"}}, false)
+	if reporter.animate || reporter.log || reporter.color {
+		t.Fatalf("non-terminal progress flags = animate:%t log:%t color:%t, want all false", reporter.animate, reporter.log, reporter.color)
+	}
+
+	called := false
+	err := reporter.Run("Checking gateway model list.", func() error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("Run() did not call wrapped function")
+	}
+	if got := output.String(); got != "" {
+		t.Fatalf("non-terminal progress wrote output %q, want silence", got)
+	}
+}
+
+func TestGatewayProgressMessagesSanitizeSecrets(t *testing.T) {
+	token := "sk-goodtoken1234567890"
+	rawBaseURL := "https://" + token + "@gateway.example.com/proxy/v1/models?api_key=" + token + "#fragment"
+	display := displayOptions{HomeDir: "/home/ada", GOOS: "linux"}
+
+	rendered := gatewayModelListProgressMessage(rawBaseURL, token, display) + "\n" +
+		gatewayProbeProgressMessage(rawBaseURL, token, "claude-"+token, display)
+
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, rawBaseURL)
+	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/models")
+	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/chat/completions")
+	assertContains(t, rendered, "claude-sk-...7890")
+}
+
 func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {
 	var listAttempts int
 	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, func(w http.ResponseWriter, r *http.Request) bool {

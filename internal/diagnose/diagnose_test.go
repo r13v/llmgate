@@ -119,11 +119,15 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 		"reason: model list failed: auth HTTP 401",
 		"request URL: " + server.URL + "/v1/models",
 		"failure kind: auth",
+		"HTTP status: 401",
 		"what it means: the gateway rejected the configured token",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("gateway failure details missing %q:\n%s", want, rendered)
 		}
+	}
+	if strings.Contains(rendered, "sk-badtoken1234") {
+		t.Fatalf("gateway failure details leaked token:\n%s", rendered)
 	}
 }
 

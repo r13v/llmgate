@@ -5,7 +5,8 @@ LiteLLM-compatible gateway.
 
 The no-argument command inspects existing Claude Code configuration after user
 approval, validates gateway credentials, recommends or selects Claude model
-mapping, previews an apply plan, writes selected targets, and reruns diagnostics.
+mapping, previews an apply plan, writes selected targets, and reruns diagnostics
+against the configuration that will be active in a new terminal or IDE session.
 Builds from `main` are rolling prereleases and can change on every push.
 
 ## Run
@@ -160,10 +161,17 @@ Diagnostics cover:
 - project gateway or model validation
 - detected write targets
 
-Diagnostic status severity is `OK < SKIP < WARN < FAIL`. A final setup result of
-`OK` prints `Configured`, `WARN` or `SKIP` prints `Configured with warnings`, and
-`FAIL` prints `Setup incomplete`. Successful and warning results remind you to
-restart your terminal and IDE.
+Diagnostic status severity is `OK < SKIP < WARN < FAIL`. Initial diagnostics
+inspect the current process environment and persisted configuration. After setup
+writes selected targets, final diagnostics reread persisted sources and validate
+the configuration that will be active in a new terminal or IDE session. If the
+already-running shell still has different managed environment values, `llmgate`
+prints a `Current terminal note`; that note is informational and does not change
+the final `OK`, `WARN`, or `FAIL` result.
+
+A final setup result of `OK` prints `Configured`, `WARN` or `SKIP` prints
+`Configured with warnings`, and `FAIL` prints `Setup incomplete`. Successful and
+warning results remind you to restart your terminal and IDE.
 
 In the interactive wizard, the first diagnostic screen shows actionable
 findings before raw checks when a problem can be summarized. Gateway

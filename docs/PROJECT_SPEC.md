@@ -45,6 +45,7 @@ The CLI must:
 - Project settings: Claude settings in the current project: `./.claude/settings.local.json` and `./.claude/settings.json`.
 - Persisted config: configuration that will affect new terminal or IDE sessions.
 - Current environment: values available to the current CLI process and current Claude Code settings.
+- New terminal session: persisted global configuration reread after setup writes, without values inherited only by the already-running CLI process.
 - IDE settings: VS Code or Cursor user settings, if their config directories already exist.
 - Write target: a location where the CLI can apply settings.
 - Apply plan: a previewed, user-confirmed write plan.
@@ -328,11 +329,16 @@ Conflict detection:
 
 ### Gateway validation contexts
 
-Diagnostics must validate the current effective gateway context and, when it differs, the persisted gateway context for new sessions.
+Initial diagnostics must validate the current effective gateway context and,
+when it differs, the persisted gateway context for new sessions. Setup final
+diagnostics after apply must reread persisted sources and validate the active
+context as `new terminal session`, excluding values inherited only by the
+already-running CLI process from the aggregate status.
 
 Context selection:
 
 - current context uses Claude Code user settings plus current process environment;
+- new terminal session context uses Claude Code user settings plus terminal shell profile or Windows user environment;
 - persisted context uses Claude Code user settings plus terminal shell profile or Windows user environment;
 - persisted context is included only when at least one gateway or model value differs from the current context;
 - gateway context values are `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, `ANTHROPIC_DEFAULT_HAIKU_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and `ANTHROPIC_DEFAULT_OPUS_MODEL`.
@@ -341,6 +347,7 @@ Display requirements:
 
 - if only one context is validated, use normal `Gateway`, `Models`, and `Model Probes` sections;
 - if multiple contexts are validated, suffix section titles with the context name, for example `Gateway (current environment)` and `Gateway (persisted config for new sessions)`;
+- during setup final diagnostics, use `new terminal session` for the active context name;
 - if one context is fully usable, failures in the other context become `WARN` and must explain that another configuration context is valid;
 - if no context is usable, gateway, model, and probe failures remain `FAIL`.
 
@@ -714,9 +721,10 @@ Flow:
 13. User approves.
 14. Write settings.
 15. Show write results.
-16. Run final diagnostics.
-17. Show `Configured` or `Configured with warnings`.
-18. Remind user to restart terminal and IDE.
+16. Run final diagnostics against reread persisted config for the new terminal session.
+17. Show a `Current terminal note` if the already-running process environment still differs from the new-session config.
+18. Show `Configured` or `Configured with warnings`.
+19. Remind user to restart terminal and IDE.
 
 Expected writes:
 
@@ -984,7 +992,10 @@ Requirements:
 
 ## Final result
 
-After successful apply, rerun diagnostics.
+After successful apply, rerun diagnostics against reread persisted sources for
+the new terminal session. Differences in the already-running process
+environment are shown only as a `Current terminal note`; they must redact secret
+values and must not change the final aggregate result.
 
 Final labels:
 
@@ -1157,6 +1168,8 @@ An implementation is behaviorally equivalent when these scenarios pass on suppor
 ### Final diagnostics scenarios
 
 - After writes, diagnostics are rerun.
+- Final setup diagnostics validate the reread new terminal session config.
+- Stale values inherited only by the already-running process can produce a redacted `Current terminal note`, but not `Configured with warnings` or `Setup incomplete`.
 - Fully valid setup ends with `Configured`.
 - Setup with project/IDE warnings ends with `Configured with warnings`.
 - Setup with remaining failures ends with `Setup incomplete`.

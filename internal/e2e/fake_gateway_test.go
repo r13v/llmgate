@@ -90,12 +90,6 @@ func (g *fakeGateway) close() {
 	}
 }
 
-func (g *fakeGateway) queueListResponses(responses ...gatewayResponse) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.listResponses = append(g.listResponses, responses...)
-}
-
 func (g *fakeGateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	g.paths = append(g.paths, r.URL.Path)

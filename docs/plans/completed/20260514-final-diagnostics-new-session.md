@@ -159,10 +159,10 @@
 - Modify: `docs/PROJECT_SPEC.md`
 - Modify: `docs/plans/20260514-final-diagnostics-new-session.md`
 
-- [ ] Update docs to state final diagnostics after setup validate `new terminal session` config.
-- [ ] Document that already-running shell differences are shown as a note only.
-- [ ] Confirm docs still state that users should restart terminal and IDE for changes to take effect.
-- [ ] Move this plan to `docs/plans/completed/` after implementation and verification.
+- [x] Update docs to state final diagnostics after setup validate `new terminal session` config.
+- [x] Document that already-running shell differences are shown as a note only.
+- [x] Confirm docs still state that users should restart terminal and IDE for changes to take effect.
+- [x] Move this plan to `docs/plans/completed/` after implementation and verification.
 
 ## Technical Details
 - Add a config-level mode instead of a wizard-only renderer workaround:

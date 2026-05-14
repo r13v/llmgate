@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/r13v/llmgate/internal/config"
@@ -149,6 +150,73 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 	}
 }
 
+func TestRunNewSessionModeRendersNewSessionContextAndIgnoresStaleProcessEnv(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-3-sonnet"})
+	defer server.Close()
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceShellProfile, Path: "/home/ada/.zshrc"}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceCurrentEnv}, allRequiredValues("sk-staleprocess1234", "https://stale.example.com", "claude-stale"), ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+		CurrentMode:   config.CurrentModeNewSession,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := result.Status(); got != core.StatusOK {
+		t.Fatalf("status = %s, want OK\n%s", got, Render(result, RenderOptions{}))
+	}
+	if result.Resolution.Current.Name != "new terminal session" {
+		t.Fatalf("Current.Name = %q, want new terminal session", result.Resolution.Current.Name)
+	}
+	for _, title := range []string{
+		"Gateway (new terminal session)",
+		"Models (new terminal session)",
+		"Model Probes (new terminal session)",
+	} {
+		if !sectionStatus(result, title, core.StatusOK) {
+			t.Fatalf("%s section was not OK:\n%s", title, Render(result, RenderOptions{}))
+		}
+	}
+
+	rendered := Render(result, RenderOptions{})
+	if !strings.Contains(rendered, "new terminal session") {
+		t.Fatalf("rendered diagnostics missing new-session wording:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "current environment") {
+		t.Fatalf("new-session diagnostics should not mention current environment:\n%s", rendered)
+	}
+}
+
+func TestRunNewSessionGatewayFindingUsesNewSessionContext(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-3-sonnet"})
+	defer server.Close()
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceShellProfile, Path: "/home/ada/.zshrc"}, allRequiredValues("sk-badtoken1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceCurrentEnv}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+		CurrentMode:   config.CurrentModeNewSession,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !checkSummaryStatus(result, "Gateway (new terminal session)", "gateway validation failed", core.StatusFAIL) {
+		t.Fatalf("new-session gateway failure was not attributed to new terminal session:\n%s", Render(result, RenderOptions{}))
+	}
+	finding := requireFinding(t, result, "gateway.new-session")
+	assertContains(t, finding.RelatedChecks, "gateway.validation.new-terminal-session")
+	assertContains(t, finding.Evidence, "context: new terminal session")
+}
+
 func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testing.T) {
 	server := newGatewayServer(t, []string{"claude-good", "claude-probe-fail"})
 	defer server.Close()
@@ -178,6 +246,120 @@ func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testin
 	assertContains(t, finding.RelatedChecks, "model-probes.claude-probe-fail")
 	assertContains(t, finding.Evidence, `subject: model "claude-probe-fail"`)
 	assertContains(t, finding.Evidence, "HTTP status: 400")
+}
+
+func TestRunBypassesCachedGatewayFailuresWhenRequested(t *testing.T) {
+	t.Run("model list", func(t *testing.T) {
+		var failModels atomic.Bool
+		var modelRequests atomic.Int64
+		failModels.Store(true)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/models":
+				modelRequests.Add(1)
+				if failModels.Load() {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = w.Write([]byte(`{"detail":"upstream unavailable"}`))
+					return
+				}
+				writeJSON(t, w, map[string]any{"data": []map[string]string{{"id": "claude-3-sonnet"}}})
+			case "/v1/chat/completions":
+				writeJSON(t, w, map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": ""}}}})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		client := testGateway(server)
+		read := testRead([]config.Source{
+			testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+		})
+
+		first, err := Run(context.Background(), testSystem(nil), read, Options{
+			NetworkChecks: true,
+			Gateway:       client,
+		})
+		if err != nil {
+			t.Fatalf("first Run() error = %v", err)
+		}
+		if got := first.Status(); got != core.StatusFAIL {
+			t.Fatalf("first status = %s, want FAIL\n%s", got, Render(first, RenderOptions{}))
+		}
+
+		failModels.Store(false)
+		second, err := Run(context.Background(), testSystem(nil), read, Options{
+			NetworkChecks:            true,
+			Gateway:                  client,
+			BypassFailedGatewayCache: true,
+		})
+		if err != nil {
+			t.Fatalf("second Run() error = %v", err)
+		}
+		if got := second.Status(); got != core.StatusOK {
+			t.Fatalf("second status = %s, want OK\n%s", got, Render(second, RenderOptions{}))
+		}
+		if got := modelRequests.Load(); got != 2 {
+			t.Fatalf("model list requests = %d, want 2 to prove failed cache bypass", got)
+		}
+	})
+
+	t.Run("model probe", func(t *testing.T) {
+		var failProbe atomic.Bool
+		var probeRequests atomic.Int64
+		failProbe.Store(true)
+
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/v1/models":
+				writeJSON(t, w, map[string]any{"data": []map[string]string{{"id": "claude-3-sonnet"}}})
+			case "/v1/chat/completions":
+				probeRequests.Add(1)
+				if failProbe.Load() {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = w.Write([]byte(`{"detail":"probe failed"}`))
+					return
+				}
+				writeJSON(t, w, map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": ""}}}})
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+		defer server.Close()
+
+		client := testGateway(server)
+		read := testRead([]config.Source{
+			testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+		})
+
+		first, err := Run(context.Background(), testSystem(nil), read, Options{
+			NetworkChecks: true,
+			Gateway:       client,
+		})
+		if err != nil {
+			t.Fatalf("first Run() error = %v", err)
+		}
+		if got := first.Status(); got != core.StatusFAIL {
+			t.Fatalf("first status = %s, want FAIL\n%s", got, Render(first, RenderOptions{}))
+		}
+
+		failProbe.Store(false)
+		second, err := Run(context.Background(), testSystem(nil), read, Options{
+			NetworkChecks:            true,
+			Gateway:                  client,
+			BypassFailedGatewayCache: true,
+		})
+		if err != nil {
+			t.Fatalf("second Run() error = %v", err)
+		}
+		if got := second.Status(); got != core.StatusOK {
+			t.Fatalf("second status = %s, want OK\n%s", got, Render(second, RenderOptions{}))
+		}
+		if got := probeRequests.Load(); got != 2 {
+			t.Fatalf("probe requests = %d, want 2 to prove failed cache bypass", got)
+		}
+	})
 }
 
 func TestRunReportsConfigSourceConflictsWithRedaction(t *testing.T) {
@@ -267,6 +449,84 @@ func TestProjectAndIDEValidationWarnSeparately(t *testing.T) {
 	}
 	if !checkSummaryStatus(result, "IDE Config Validation", "ANTHROPIC_MODEL model is unavailable", core.StatusWARN) {
 		t.Fatalf("IDE unavailable selected model warning missing:\n%s", Render(result, RenderOptions{}))
+	}
+}
+
+func TestRunBypassesCachedSideContextFailuresWhenRequested(t *testing.T) {
+	projectToken := "sk-projectgood1234"
+	ideToken := "sk-idegood1234"
+	var failProject atomic.Bool
+	var failIDE atomic.Bool
+	var projectRequests atomic.Int64
+	var ideRequests atomic.Int64
+	failProject.Store(true)
+	failIDE.Store(true)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+			switch token {
+			case projectToken:
+				projectRequests.Add(1)
+				if failProject.Load() {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = w.Write([]byte(`{"detail":"project gateway stale failure"}`))
+					return
+				}
+			case ideToken:
+				ideRequests.Add(1)
+				if failIDE.Load() {
+					w.WriteHeader(http.StatusBadGateway)
+					_, _ = w.Write([]byte(`{"detail":"IDE gateway stale failure"}`))
+					return
+				}
+			}
+			writeJSON(t, w, map[string]any{"data": []map[string]string{{"id": "claude-3-sonnet"}}})
+		case "/v1/chat/completions":
+			writeJSON(t, w, map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": ""}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := testGateway(server)
+	if _, err := client.ListModels(context.Background(), server.URL, projectToken, gateway.RequestOptions{}); err == nil {
+		t.Fatal("project side pre-cache ListModels() error = nil, want failure")
+	}
+	if _, err := client.ListModels(context.Background(), server.URL, ideToken, gateway.RequestOptions{}); err == nil {
+		t.Fatal("IDE side pre-cache ListModels() error = nil, want failure")
+	}
+	failProject.Store(false)
+	failIDE.Store(false)
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}, allRequiredValues("sk-goodtoken1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceProjectLocalSettings, Path: "/home/ada/project/.claude/settings.local.json"}, allRequiredValues(projectToken, server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: "/home/ada/.config/Code/User/settings.json"}, allRequiredValues(ideToken, server.URL, "claude-3-sonnet"), ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks:            true,
+		Gateway:                  client,
+		CurrentMode:              config.CurrentModeNewSession,
+		BypassFailedGatewayCache: true,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !sectionStatus(result, "Project Config Validation", core.StatusOK) {
+		t.Fatalf("project validation did not bypass cached failure:\n%s", Render(result, RenderOptions{}))
+	}
+	if !sectionStatus(result, "IDE Config Validation", core.StatusOK) {
+		t.Fatalf("IDE validation did not bypass cached failure:\n%s", Render(result, RenderOptions{}))
+	}
+	if got := projectRequests.Load(); got != 2 {
+		t.Fatalf("project model list requests = %d, want 2 to prove failed cache bypass", got)
+	}
+	if got := ideRequests.Load(); got != 2 {
+		t.Fatalf("IDE model list requests = %d, want 2 to prove failed cache bypass", got)
 	}
 }
 
@@ -421,7 +681,7 @@ func TestRunBuildsGroupedIDEDriftFinding(t *testing.T) {
 	}
 
 	finding := requireFinding(t, result, "ide-drift.anthropic-auth-token")
-	if finding.Status != core.StatusWARN || finding.Title != "IDE: ANTHROPIC_AUTH_TOKEN differs from terminal" {
+	if finding.Status != core.StatusWARN || finding.Title != "IDE: ANTHROPIC_AUTH_TOKEN differs from current environment" {
 		t.Fatalf("IDE drift finding = %#v, want grouped WARN", finding)
 	}
 	if !strings.Contains(finding.Summary, "2 IDE sources") {
@@ -430,6 +690,43 @@ func TestRunBuildsGroupedIDEDriftFinding(t *testing.T) {
 	assertContains(t, finding.RelatedChecks, "ide-config.01.ANTHROPIC_AUTH_TOKEN")
 	assertContains(t, finding.RelatedChecks, "ide-config.02.ANTHROPIC_AUTH_TOKEN")
 	assertContains(t, finding.Evidence, "distinct IDE values: 2")
+	assertContains(t, finding.Evidence, "compared against: current environment")
+}
+
+func TestRunNewSessionIDEDriftComparesAgainstNewTerminalSession(t *testing.T) {
+	persistedValues := allRequiredValues("sk-goodtoken1234", "https://gateway.example.com", "claude-new-session")
+	currentValues := allRequiredValues("sk-goodtoken1234", "https://gateway.example.com", "claude-stale-process")
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceShellProfile, Path: "/home/ada/.zshrc"}, persistedValues, ""),
+		testSource(core.SourceLabel{Kind: core.SourceCurrentEnv}, currentValues, ""),
+		testSource(core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: "/home/ada/.config/Code/User/settings.json"}, nil, "claude-new-session"),
+	})
+
+	processResult, err := Run(context.Background(), testSystem(nil), read, Options{NetworkChecks: false})
+	if err != nil {
+		t.Fatalf("process Run() error = %v", err)
+	}
+	if len(processResult.Resolution.IDEDrift) == 0 {
+		t.Fatalf("process-mode IDE drift missing, test no longer proves new-session comparison")
+	}
+
+	newSessionResult, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: false,
+		CurrentMode:   config.CurrentModeNewSession,
+	})
+	if err != nil {
+		t.Fatalf("new-session Run() error = %v", err)
+	}
+	if len(newSessionResult.Resolution.IDEDrift) != 0 {
+		t.Fatalf("new-session IDE drift = %#v, want none", newSessionResult.Resolution.IDEDrift)
+	}
+	if !sectionStatus(newSessionResult, "IDE Config", core.StatusOK) {
+		t.Fatalf("IDE Config section was not OK:\n%s", Render(newSessionResult, RenderOptions{}))
+	}
+	rendered := Render(newSessionResult, RenderOptions{})
+	if !strings.Contains(rendered, "IDE Claude settings match new terminal session") {
+		t.Fatalf("IDE section did not use new-session comparison label:\n%s", rendered)
+	}
 }
 
 func TestRunConnectsGatewayAuthFindingToTokenConflict(t *testing.T) {

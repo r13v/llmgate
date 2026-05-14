@@ -95,19 +95,19 @@
 - Modify: `internal/diagnose/findings.go`
 - Modify: `internal/diagnose/findings_test.go`
 
-- [ ] Add diagnostic options for current context mode and gateway failed-cache bypass.
-- [ ] Have `diagnose.Run` call mode-aware config resolution.
-- [ ] Pass `BypassFailedCache` through `ListModels` and `ProbeModel` evaluations when requested.
-- [ ] Pass `BypassFailedCache` through side-context `ListModels` calls in project and IDE validation when requested.
-- [ ] Replace hard-coded `current environment` assumptions with the selected current context name across diagnostic sections, checks, details, and findings.
-- [ ] Audit `buildClaudeConfigSection`, `buildRuntimeSection`, `runtimeSummary`, `runtimeDetails`, `repairableStaleShellModel`, context constants, and finding evidence/title text for mode-sensitive wording.
-- [ ] Verify gateway/model/probe section titles and evidence say `new terminal session` in final mode.
-- [ ] Add a rendered-output test proving final diagnostics do not say `current environment` in new-session mode except in the separate current-terminal note owned by wizard output.
-- [ ] Add unit tests proving new-session diagnostics do not evaluate stale process env as the gateway context.
-- [ ] Add unit tests proving final diagnostics bypass cached gateway failures.
-- [ ] Add unit tests proving side-context project/IDE validation bypasses cached gateway failures in final mode.
-- [ ] Add unit tests proving IDE drift compares against `new terminal session` in final mode.
-- [ ] Run relevant tests and confirm they pass before next task: `go test ./internal/diagnose`.
+- [x] Add diagnostic options for current context mode and gateway failed-cache bypass.
+- [x] Have `diagnose.Run` call mode-aware config resolution.
+- [x] Pass `BypassFailedCache` through `ListModels` and `ProbeModel` evaluations when requested.
+- [x] Pass `BypassFailedCache` through side-context `ListModels` calls in project and IDE validation when requested.
+- [x] Replace hard-coded `current environment` assumptions with the selected current context name across diagnostic sections, checks, details, and findings.
+- [x] Audit `buildClaudeConfigSection`, `buildRuntimeSection`, `runtimeSummary`, `runtimeDetails`, `repairableStaleShellModel`, context constants, and finding evidence/title text for mode-sensitive wording.
+- [x] Verify gateway/model/probe section titles and evidence say `new terminal session` in final mode.
+- [x] Add a rendered-output test proving final diagnostics do not say `current environment` in new-session mode except in the separate current-terminal note owned by wizard output.
+- [x] Add unit tests proving new-session diagnostics do not evaluate stale process env as the gateway context.
+- [x] Add unit tests proving final diagnostics bypass cached gateway failures.
+- [x] Add unit tests proving side-context project/IDE validation bypasses cached gateway failures in final mode.
+- [x] Add unit tests proving IDE drift compares against `new terminal session` in final mode.
+- [x] Run relevant tests and confirm they pass before next task: `go test ./internal/diagnose`.
 
 ### Task 3: Use New-Session Diagnostics After Apply and Print Process Env Note
 **Files:**

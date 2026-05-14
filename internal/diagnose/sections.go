@@ -27,8 +27,9 @@ const (
 	sectionIDEConfigValidation     = "ide-config-validation"
 	sectionWriteTargets            = "write-targets"
 
-	contextCurrent   = "current environment"
-	contextPersisted = "persisted config for new sessions"
+	contextCurrent    = "current environment"
+	contextNewSession = "new terminal session"
+	contextPersisted  = "persisted config for new sessions"
 )
 
 var (
@@ -101,30 +102,32 @@ type sideGatewayFailure struct {
 
 func buildClaudeConfigSection(resolution config.Resolution) core.DiagnosticSection {
 	checks := make([]core.DiagnosticCheck, 0, len(core.RequiredValues))
+	currentName := resolution.Current.Name
+	persistedName := resolution.Persisted.Name
 	for _, required := range core.RequiredValues {
 		current, currentOK := resolution.Current.Get(required.Name)
 		persisted, persistedOK := resolution.Persisted.Get(required.Name)
 		status := core.StatusOK
-		summary := fmt.Sprintf("%s is present in current and persisted config", required.Name)
+		summary := fmt.Sprintf("%s is present in %s and %s", required.Name, currentName, persistedName)
 		var details []string
 
 		switch {
 		case currentOK && persistedOK:
 			details = append(details,
-				"current: "+resolvedDisplay(current),
-				"persisted: "+resolvedDisplay(persisted),
+				currentName+": "+resolvedDisplay(current),
+				persistedName+": "+resolvedDisplay(persisted),
 			)
 		case currentOK:
 			status = core.StatusWARN
-			summary = fmt.Sprintf("%s exists only in the current environment", required.Name)
-			details = append(details, "current: "+resolvedDisplay(current))
+			summary = fmt.Sprintf("%s exists only in %s", required.Name, currentName)
+			details = append(details, currentName+": "+resolvedDisplay(current))
 		case persistedOK:
 			status = core.StatusWARN
-			summary = fmt.Sprintf("%s exists only in persisted config for new sessions", required.Name)
-			details = append(details, "persisted: "+resolvedDisplay(persisted))
+			summary = fmt.Sprintf("%s exists only in %s", required.Name, persistedName)
+			details = append(details, persistedName+": "+resolvedDisplay(persisted))
 		default:
 			status = core.StatusFAIL
-			summary = fmt.Sprintf("%s is missing from current and persisted config", required.Name)
+			summary = fmt.Sprintf("%s is missing from %s and %s", required.Name, currentName, persistedName)
 		}
 
 		checks = append(checks, core.DiagnosticCheck{
@@ -177,16 +180,19 @@ func buildConflictSection(conflicts []config.ConflictIssue) (core.DiagnosticSect
 	}, true
 }
 
-func buildRuntimeSection(differences []config.RuntimeDifference) core.DiagnosticSection {
+func buildRuntimeSection(resolution config.Resolution) core.DiagnosticSection {
+	differences := resolution.Runtime
+	currentName := resolution.Current.Name
+	persistedName := resolution.Persisted.Name
 	if len(differences) == 0 {
 		return core.DiagnosticSection{
 			ID:    sectionRuntimeEnvironment,
 			Title: "Runtime Environment",
 			Checks: []core.DiagnosticCheck{{
 				ID:      "runtime.match",
-				Title:   "Runtime matches persisted config",
+				Title:   "Runtime contexts match",
 				Status:  core.StatusOK,
-				Summary: "current environment and persisted config match for managed values",
+				Summary: fmt.Sprintf("%s and %s match for managed values", currentName, persistedName),
 			}},
 		}
 	}
@@ -197,8 +203,8 @@ func buildRuntimeSection(differences []config.RuntimeDifference) core.Diagnostic
 			ID:      "runtime." + difference.Name,
 			Title:   difference.Name,
 			Status:  core.StatusWARN,
-			Summary: runtimeSummary(difference),
-			Details: runtimeDetails(difference),
+			Summary: runtimeSummary(difference, currentName, persistedName),
+			Details: runtimeDetails(difference, currentName, persistedName),
 		})
 	}
 
@@ -349,7 +355,7 @@ func buildModelsSection(evaluation contextEvaluation, multiple, hasOtherUsable b
 				if status == core.StatusWARN {
 					if warning, ok := repairableStaleShellModel(model, current); ok {
 						repairable = append(repairable, warning)
-						details = append(details, "repairable: stale shell model can be updated from the current environment")
+						details = append(details, "repairable: stale shell model can be updated from the "+current.Name)
 					}
 				}
 			default:
@@ -417,7 +423,7 @@ func buildProbesSection(evaluation contextEvaluation, multiple, hasOtherUsable b
 	}
 }
 
-func buildIDEConfigSection(read config.ReadResult, differences []config.SideContextDifference) (core.DiagnosticSection, bool) {
+func buildIDEConfigSection(read config.ReadResult, currentContextName string, differences []config.SideContextDifference) (core.DiagnosticSection, bool) {
 	if !hasIDESource(read.Sources) {
 		return core.DiagnosticSection{}, false
 	}
@@ -429,7 +435,7 @@ func buildIDEConfigSection(read config.ReadResult, differences []config.SideCont
 				ID:      "ide-config.match",
 				Title:   "IDE config",
 				Status:  core.StatusOK,
-				Summary: "IDE Claude settings match terminal config",
+				Summary: "IDE Claude settings match " + currentContextName,
 			}},
 		}, true
 	}
@@ -496,30 +502,30 @@ func buildWriteTargetsSection(targets []core.WriteTarget) core.DiagnosticSection
 	}
 }
 
-func runtimeSummary(difference config.RuntimeDifference) string {
+func runtimeSummary(difference config.RuntimeDifference, currentName, persistedName string) string {
 	switch difference.Kind {
 	case config.DifferenceCurrentOnly:
-		return fmt.Sprintf("%s exists only in the current environment", difference.Name)
+		return fmt.Sprintf("%s exists only in %s", difference.Name, currentName)
 	case config.DifferencePersistedOnly:
-		return fmt.Sprintf("%s exists only in persisted config for new sessions", difference.Name)
+		return fmt.Sprintf("%s exists only in %s", difference.Name, persistedName)
 	case config.DifferenceCurrentDiffers:
-		return fmt.Sprintf("%s differs between current and persisted config", difference.Name)
+		return fmt.Sprintf("%s differs between %s and %s", difference.Name, currentName, persistedName)
 	default:
 		return fmt.Sprintf("%s differs between runtime contexts", difference.Name)
 	}
 }
 
-func runtimeDetails(difference config.RuntimeDifference) []string {
+func runtimeDetails(difference config.RuntimeDifference, currentName, persistedName string) []string {
 	var details []string
 	if difference.Current != nil {
-		details = append(details, "current: "+resolvedDisplay(*difference.Current))
+		details = append(details, currentName+": "+resolvedDisplay(*difference.Current))
 	} else {
-		details = append(details, "current: <unset>")
+		details = append(details, currentName+": <unset>")
 	}
 	if difference.Persisted != nil {
-		details = append(details, "persisted: "+resolvedDisplay(*difference.Persisted))
+		details = append(details, persistedName+": "+resolvedDisplay(*difference.Persisted))
 	} else {
-		details = append(details, "persisted: <unset>")
+		details = append(details, persistedName+": <unset>")
 	}
 	return details
 }

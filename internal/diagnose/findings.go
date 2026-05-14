@@ -361,15 +361,15 @@ func buildIDEDriftFindings(differences []config.SideContextDifference) []core.Di
 			"compared against: " + comparedAgainst,
 		}
 		if g.globalSource != "" {
-			evidence = append(evidence, "terminal source: "+g.globalSource)
+			evidence = append(evidence, "global source: "+g.globalSource)
 		}
 		findings = append(findings, core.DiagnosticFinding{
 			ID:            "ide-drift." + findingSlug(name),
 			Status:        core.StatusWARN,
-			Title:         "IDE: " + name + " differs from terminal",
+			Title:         "IDE: " + name + " differs from " + comparedAgainst,
 			Summary:       fmt.Sprintf("%s differs in %d IDE %s compared with %s.", name, len(g.sourceSet), plural("source", len(g.sourceSet)), comparedAgainst),
 			Evidence:      evidence,
-			Remediation:   "Update Cursor/VS Code settings or remove the IDE override so " + name + " matches terminal config.",
+			Remediation:   "Update Cursor/VS Code settings or remove the IDE override so " + name + " matches " + comparedAgainst + ".",
 			RelatedChecks: uniqueStrings(g.checkIDs),
 		})
 	}
@@ -400,6 +400,9 @@ func sideGatewayPrefix(source core.SourceLabel) string {
 func contextFindingSlug(context string) string {
 	if context == contextCurrent {
 		return "current"
+	}
+	if context == contextNewSession {
+		return "new-session"
 	}
 	if context == contextPersisted {
 		return "persisted"

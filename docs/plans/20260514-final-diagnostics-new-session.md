@@ -131,14 +131,14 @@
 - Modify: `internal/e2e/acceptance_test.go`
 - Modify: `internal/e2e/wizard_accessible_test.go` if accessible output expectations change.
 
-- [ ] Add or update acceptance coverage where setup updates `.zshrc`, current process env remains stale, and final diagnostics are `OK`.
-- [ ] Assert the old cached gateway failure does not appear in final diagnostics.
-- [ ] Assert final output uses `new terminal session`, not `current environment`, for the final gateway context.
-- [ ] Assert `Current terminal note` is present for stale already-running process env.
-- [ ] Assert the `Current terminal note` redacts secret values.
-- [ ] Assert IDE drift warning disappears when IDE targets are updated to match the new session config.
-- [ ] Assert IDE drift warning remains and final result is `WARN` when IDE overrides are left stale.
-- [ ] Run relevant tests and confirm they pass before next task: `go test -tags=e2e ./internal/e2e`.
+- [x] Add or update acceptance coverage where setup updates `.zshrc`, current process env remains stale, and final diagnostics are `OK`.
+- [x] Assert the old cached gateway failure does not appear in final diagnostics.
+- [x] Assert final output uses `new terminal session`, not `current environment`, for the final gateway context.
+- [x] Assert `Current terminal note` is present for stale already-running process env.
+- [x] Assert the `Current terminal note` redacts secret values.
+- [x] Assert IDE drift warning disappears when IDE targets are updated to match the new session config.
+- [x] Assert IDE drift warning remains and final result is `WARN` when IDE overrides are left stale.
+- [x] Run relevant tests and confirm they pass before next task: `go test -tags=e2e ./internal/e2e`.
 
 ### Task 5: Verify Acceptance Criteria
 **Files:**

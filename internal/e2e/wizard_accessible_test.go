@@ -127,7 +127,7 @@ func TestAccessibleWizardStructuredDiagnosticSummaryGroupsTokenFindings(t *testi
 	assertContains(t, output, "Initial diagnostics: FAIL")
 	assertContains(t, output, "FAIL Gateway: token rejected")
 	assertContains(t, output, "WARN Config: ANTHROPIC_AUTH_TOKEN differs across sources")
-	assertContains(t, output, "WARN IDE: ANTHROPIC_AUTH_TOKEN differs from terminal")
+	assertContains(t, output, "WARN IDE: ANTHROPIC_AUTH_TOKEN differs from current environment")
 	assertContains(t, output, "evidence: request URL:")
 	assertContains(t, output, "evidence: HTTP status: 401")
 	assertContains(t, output, "fix:")
@@ -142,7 +142,7 @@ func TestAccessibleWizardStructuredDiagnosticSummaryGroupsTokenFindings(t *testi
 	if got := strings.Count(output, "Config: ANTHROPIC_AUTH_TOKEN differs across sources"); got != 1 {
 		t.Fatalf("grouped config finding count = %d, want 1\n%s", got, output)
 	}
-	if got := strings.Count(output, "IDE: ANTHROPIC_AUTH_TOKEN differs from terminal"); got != 1 {
+	if got := strings.Count(output, "IDE: ANTHROPIC_AUTH_TOKEN differs from current environment"); got != 1 {
 		t.Fatalf("grouped IDE finding count = %d, want 1\n%s", got, output)
 	}
 	if h.fs.mutationOps() != 0 {

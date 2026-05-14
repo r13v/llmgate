@@ -633,6 +633,153 @@ func TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios(t *testing.T) {
 	})
 }
 
+func TestAcceptanceSetupFinalDiagnosticsNewSessionScenarios(t *testing.T) {
+	t.Run("stale process env and updated shell produce OK final diagnostics", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.zshrc", shellExports(altTestToken, h.gateway.url(), staleModel), 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect", values: []string{"0", "1"}},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("setup error = %v\n%s", err, output)
+		}
+
+		assertFileContains(t, h.fs, "/home/ada/.zshrc", "export ANTHROPIC_AUTH_TOKEN='"+testToken+"'")
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertContains(t, final, "Configured")
+		assertContains(t, final, "Current terminal note:")
+		assertNotContains(t, final, "current environment")
+		note := currentTerminalNoteLine(output)
+		assertContains(t, note, "Current terminal note:")
+		assertNotContains(t, note, altTestToken)
+		assertNotContains(t, note, testToken)
+		assertNoSecretLeak(t, output, altTestToken, testToken)
+	})
+
+	t.Run("updating IDE targets removes drift against new session config", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.zshrc", shellExports(altTestToken, h.gateway.url(), staleModel), 0o600)
+		h.fs.addDir("/home/ada/.config/Code/User")
+		h.fs.addDir("/home/ada/.config/Cursor/User")
+		staleIDE := ideSettings(staleModel, map[string]string{
+			core.VarAnthropicAuthToken: altTestToken,
+			core.VarAnthropicBaseURL:   h.gateway.url(),
+			core.VarAnthropicModel:     staleModel,
+		})
+		h.fs.addFile("/home/ada/.config/Code/User/settings.json", staleIDE, 0o600)
+		h.fs.addFile("/home/ada/.config/Cursor/User/settings.json", staleIDE, 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("IDE update setup error = %v\n%s", err, output)
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertNotContains(t, final, "WARN IDE")
+		assertNotContains(t, final, "IDE: ANTHROPIC_AUTH_TOKEN differs from new terminal session")
+		assertFileContains(t, h.fs, "/home/ada/.config/Code/User/settings.json", testToken)
+		assertFileContains(t, h.fs, "/home/ada/.config/Cursor/User/settings.json", sonnetModel)
+	})
+
+	t.Run("stale IDE targets remain WARN and bypass cached side-context failure", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addDir("/home/ada/.config/Code/User")
+		h.fs.addFile("/home/ada/.config/Code/User/settings.json", ideSettings(staleModel, map[string]string{
+			core.VarAnthropicModel: staleModel,
+		}), 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+
+		client := h.gateway.client()
+		cachedStaleFailure := false
+		h.fs.afterMove = func(finalPath string) {
+			if cachedStaleFailure || finalPath != "/home/ada/.zshrc" {
+				return
+			}
+			cachedStaleFailure = true
+			h.fs.files["/home/ada/.config/Code/User/settings.json"] = ideSettings(staleModel, map[string]string{
+				core.VarAnthropicAuthToken: altTestToken,
+				core.VarAnthropicBaseURL:   h.gateway.url(),
+				core.VarAnthropicModel:     staleModel,
+			})
+			h.gateway.queueListResponses(gatewayResponse{
+				status: http.StatusBadGateway,
+				body:   `{"detail":"old cached gateway failure"}`,
+			})
+			if _, err := client.ListModels(context.Background(), h.gateway.url(), altTestToken, gateway.RequestOptions{}); err == nil {
+				t.Fatal("pre-cache IDE ListModels() error = nil, want failure")
+			}
+		}
+
+		output, err := h.runWithPrompterAndGateway(&scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect", values: []string{"0", "1"}},
+			{kind: "confirm", confirm: true},
+		}}, client)
+		if err != nil {
+			t.Fatalf("stale IDE setup error = %v\n%s", err, output)
+		}
+		if !cachedStaleFailure {
+			t.Fatal("test did not cache stale IDE gateway failure")
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: WARN")
+		assertContains(t, final, "Configured with warnings")
+		assertContains(t, final, "differs from new terminal session")
+		assertNotContains(t, output, "old cached gateway failure")
+		if h.gateway.listCalls < 3 {
+			t.Fatalf("gateway list calls = %d, want at least 3 to prove final IDE validation bypassed failed cache", h.gateway.listCalls)
+		}
+	})
+
+	t.Run("final gateway failure is labeled as new terminal session", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.afterMove = func(finalPath string) {
+			if finalPath == "/home/ada/.zshrc" {
+				h.fs.files[finalPath] = shellExports(testToken, "://bad", sonnetModel)
+			}
+		}
+
+		output, err := h.runScripted(freshSetupResponses(h.gateway.url(), nil))
+		if !errors.Is(err, wizard.ErrSetupIncomplete) {
+			t.Fatalf("setup error = %v, want ErrSetupIncomplete\n%s", err, output)
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: FAIL")
+		assertContains(t, final, "*Gateway (new terminal session)*")
+		assertNotContains(t, final, "*Gateway (current environment)*")
+	})
+}
+
 func freshSetupResponses(baseURL string, targets []string) []promptResponse {
 	return []promptResponse{
 		{kind: "confirm", confirm: true},
@@ -704,4 +851,33 @@ func ideSettings(selectedModel string, values map[string]string) []byte {
 		panic(err)
 	}
 	return append(data, '\n')
+}
+
+func shellExports(token, baseURL, model string) []byte {
+	return []byte(strings.Join([]string{
+		"export ANTHROPIC_AUTH_TOKEN='" + token + "'",
+		"export ANTHROPIC_BASE_URL='" + baseURL + "'",
+		"export ANTHROPIC_MODEL='" + model + "'",
+		"export ANTHROPIC_DEFAULT_HAIKU_MODEL='" + haikuModel + "'",
+		"export ANTHROPIC_DEFAULT_SONNET_MODEL='" + sonnetModel + "'",
+		"export ANTHROPIC_DEFAULT_OPUS_MODEL='" + opusModel + "'",
+		"",
+	}, "\n"))
+}
+
+func finalDiagnosticsOutput(output string) string {
+	index := strings.LastIndex(output, "Final diagnostics:")
+	if index < 0 {
+		return ""
+	}
+	return output[index:]
+}
+
+func currentTerminalNoteLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Current terminal note:") {
+			return line
+		}
+	}
+	return ""
 }

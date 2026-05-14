@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/r13v/llmgate/internal/apply"
+	"github.com/r13v/llmgate/internal/gateway"
 	"github.com/r13v/llmgate/internal/system"
 	"github.com/r13v/llmgate/internal/wizard"
 )
@@ -94,6 +95,10 @@ func (h *harness) runScripted(responses []promptResponse, opts ...runOption) (st
 }
 
 func (h *harness) runWithPrompter(prompter wizard.Prompter, opts ...runOption) (string, error) {
+	return h.runWithPrompterAndGateway(prompter, h.gateway.client(), opts...)
+}
+
+func (h *harness) runWithPrompterAndGateway(prompter wizard.Prompter, client gateway.Client, opts ...runOption) (string, error) {
 	config := runConfig{interactive: true}
 	for _, opt := range opts {
 		opt(&config)
@@ -103,7 +108,7 @@ func (h *harness) runWithPrompter(prompter wizard.Prompter, opts ...runOption) (
 	h.terminal.interactive = config.interactive
 	err := wizard.Run(context.Background(), wizard.Options{
 		System:         h.system(),
-		Gateway:        h.gateway.client(),
+		Gateway:        client,
 		Prompter:       prompter,
 		Output:         &h.output,
 		CommandTimeout: time.Second,

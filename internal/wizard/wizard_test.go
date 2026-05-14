@@ -8,11 +8,13 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/xpty"
 	"github.com/r13v/llmgate/internal/config"
 	"github.com/r13v/llmgate/internal/core"
 	"github.com/r13v/llmgate/internal/diagnose"
@@ -345,6 +347,39 @@ func TestDiagnosticSummaryRedactsAllFindingFields(t *testing.T) {
 	assertContains(t, rendered, "~/.zshrc")
 }
 
+func TestDiagnosticSummaryOmitsNoisyFindingLinesForOKDiagnostics(t *testing.T) {
+	var output bytes.Buffer
+	result := diagnose.Result{
+		Read: configReadForSummary("sk-oksecret1234567890"),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Status:  core.StatusOK,
+				Title:   "Gateway validation",
+				Summary: "gateway model list succeeded",
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:      "gateway.current",
+			Status:  core.StatusOK,
+			Title:   "Gateway: healthy",
+			Summary: "The gateway is healthy.",
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	if rendered != "Initial diagnostics: OK\n" {
+		t.Fatalf("OK summary = %q, want quiet status line only", rendered)
+	}
+	assertNotContains(t, rendered, "why:")
+	assertNotContains(t, rendered, "evidence:")
+	assertNotContains(t, rendered, "fix:")
+	assertNotContains(t, rendered, "Gateway: healthy")
+}
+
 func TestDiagnosticSummaryColorsOnlyStatusTokens(t *testing.T) {
 	var output bytes.Buffer
 	result := diagnose.Result{
@@ -425,6 +460,30 @@ func TestProgressReporterIsSilentForNonTerminalOutput(t *testing.T) {
 	}
 	if got := output.String(); got != "" {
 		t.Fatalf("non-terminal progress wrote output %q, want silence", got)
+	}
+}
+
+func TestProgressReporterEnablesStatusOutputOnlyForTTY(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix PTY smoke test is skipped on Windows")
+	}
+	pty, err := xpty.NewUnixPty(80, 24)
+	if err != nil {
+		t.Skipf("pty unavailable: %v", err)
+	}
+	defer func() {
+		_ = pty.Close()
+	}()
+
+	env := &testEnvironment{values: map[string]string{"TERM": "xterm-256color"}}
+	reporter := newProgressReporter(pty.Slave(), env, false)
+	if !reporter.animate || !reporter.log || !reporter.color {
+		t.Fatalf("TTY progress flags = animate:%t log:%t color:%t, want all true", reporter.animate, reporter.log, reporter.color)
+	}
+
+	accessible := newProgressReporter(pty.Slave(), env, true)
+	if accessible.animate || !accessible.log || accessible.color {
+		t.Fatalf("accessible TTY progress flags = animate:%t log:%t color:%t, want animate false, log true, color false", accessible.animate, accessible.log, accessible.color)
 	}
 }
 

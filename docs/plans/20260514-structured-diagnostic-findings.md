@@ -163,11 +163,11 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 **Files:**
 - Modify: tests only as needed
 
-- [ ] Verify the screenshot-style scenario renders one primary gateway finding, one grouped config token finding, and one grouped IDE token finding.
-- [ ] Verify no raw token, bearer token, API key, or full home path leaks in first-screen summary or full details.
-- [ ] Verify OK diagnostics do not show noisy finding sections.
-- [ ] Verify network spinner/status output still appears only on interactive TTY.
-- [ ] Run final repository verification: `make test` and `make test-e2e`, or `make check` when lint/tooling is available.
+- [x] Verify the screenshot-style scenario renders one primary gateway finding, one grouped config token finding, and one grouped IDE token finding.
+- [x] Verify no raw token, bearer token, API key, or full home path leaks in first-screen summary or full details.
+- [x] Verify OK diagnostics do not show noisy finding sections.
+- [x] Verify network spinner/status output still appears only on interactive TTY.
+- [x] Run final repository verification: `make test` and `make test-e2e`, or `make check` when lint/tooling is available.
 
 ### Task 7: Final Documentation
 **Files:**

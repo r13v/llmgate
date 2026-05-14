@@ -135,7 +135,10 @@ func TestAccessibleWizardStructuredDiagnosticSummaryGroupsTokenFindings(t *testi
 	assertNotContains(t, output, "[Config Source Conflicts / ANTHROPIC_AUTH_TOKEN]")
 	assertNotContains(t, output, "[IDE Config / ANTHROPIC_AUTH_TOKEN]")
 	assertNotContains(t, accessibleInitialSummary(output), "\x1b[")
-	assertNoSecretLeak(t, output, leakedToken, testToken)
+	assertNoSensitiveDiagnosticsLeak(t, output, leakedToken, testToken)
+	if got := strings.Count(output, "Gateway: token rejected"); got != 1 {
+		t.Fatalf("primary gateway finding count = %d, want 1\n%s", got, output)
+	}
 	if got := strings.Count(output, "Config: ANTHROPIC_AUTH_TOKEN differs across sources"); got != 1 {
 		t.Fatalf("grouped config finding count = %d, want 1\n%s", got, output)
 	}
@@ -144,6 +147,41 @@ func TestAccessibleWizardStructuredDiagnosticSummaryGroupsTokenFindings(t *testi
 	}
 	if h.fs.mutationOps() != 0 {
 		t.Fatalf("diagnostic summary wrote filesystem %d time(s)\n%s", h.fs.mutationOps(), output)
+	}
+}
+
+func TestAccessibleWizardReviewDetailsRedactsSensitiveGatewayEvidence(t *testing.T) {
+	h := newHarness(t, withGatewayOptions(t, fakeGatewayOptions{
+		acceptedTokens: []string{leakedToken},
+		listResponses: []gatewayResponse{{
+			status: http.StatusBadGateway,
+			body:   `{"detail":"Bearer ` + leakedToken + ` api_key=` + leakedToken + ` from /home/ada/.cache/llmgate"}`,
+		}},
+	}))
+	rawBaseURL := h.gateway.url() + "/v1/models?api_key=" + leakedToken + "#fragment"
+	addAccessibleFile(h.fs, "/home/ada/.claude/settings.json", []byte(`{"env":{`+
+		`"ANTHROPIC_AUTH_TOKEN":"`+leakedToken+`",`+
+		`"ANTHROPIC_BASE_URL":"`+rawBaseURL+`",`+
+		`"ANTHROPIC_MODEL":"`+sonnetModel+`",`+
+		`"ANTHROPIC_DEFAULT_HAIKU_MODEL":"`+haikuModel+`",`+
+		`"ANTHROPIC_DEFAULT_SONNET_MODEL":"`+sonnetModel+`",`+
+		`"ANTHROPIC_DEFAULT_OPUS_MODEL":"`+opusModel+`"`+
+		`}}`+"\n"), 0o600)
+
+	output, err := h.runAccessible("y\n2\n")
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output)
+	}
+
+	assertContains(t, output, "Initial diagnostics: FAIL")
+	assertContains(t, output, "llmgate diagnosis: FAIL")
+	assertContains(t, output, "gateway validation failed")
+	assertContains(t, output, "reason: model list failed: http HTTP 502")
+	assertContains(t, output, "sk-...7890")
+	assertContains(t, output, "~/.cache/llmgate")
+	assertNoSensitiveDiagnosticsLeak(t, output, leakedToken)
+	if h.fs.mutationOps() != 0 {
+		t.Fatalf("review details mutated filesystem %d time(s)\n%s", h.fs.mutationOps(), output)
 	}
 }
 
@@ -178,4 +216,17 @@ func accessibleInitialSummary(output string) string {
 		summary.WriteByte('\n')
 	}
 	return summary.String()
+}
+
+func assertNoSensitiveDiagnosticsLeak(t *testing.T, output string, secrets ...string) {
+	t.Helper()
+	assertNoSecretLeak(t, output, secrets...)
+	for _, secret := range secrets {
+		if secret == "" {
+			continue
+		}
+		assertNotContains(t, output, "Bearer "+secret)
+		assertNotContains(t, output, "api_key="+secret)
+	}
+	assertNotContains(t, output, "/home/ada")
 }

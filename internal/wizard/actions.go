@@ -188,8 +188,7 @@ gatewayLoop:
 
 		var modelList gateway.ModelListResult
 		for {
-			var err error
-			err = r.progress.Run(gatewayModelListProgressMessage(baseURL, token, display), func() error {
+			err := r.progress.Run(gatewayModelListProgressMessage(baseURL, token, display), func() error {
 				var listErr error
 				modelList, listErr = r.gateway.ListModels(ctx, baseURL, token, gateway.RequestOptions{BypassFailedCache: bypassGatewayFailure})
 				return listErr

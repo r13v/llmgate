@@ -308,6 +308,103 @@ func TestRunBuildsSideContextGatewayFindings(t *testing.T) {
 	}
 }
 
+func TestValidateSideContextRetainsNonAuthGatewayFailureKinds(t *testing.T) {
+	tests := []struct {
+		name         string
+		label        string
+		source       core.SourceLabel
+		baseURL      string
+		status       int
+		body         string
+		wantTitle    string
+		wantCheckID  string
+		wantEvidence []string
+	}{
+		{
+			name:        "project invalid URL",
+			label:       "Project",
+			source:      core.SourceLabel{Kind: core.SourceProjectLocalSettings},
+			baseURL:     "not-a-url",
+			wantTitle:   "Project gateway: invalid base URL",
+			wantCheckID: "Project.project_local_settings.gateway",
+			wantEvidence: []string{
+				"failure kind: invalid-url",
+			},
+		},
+		{
+			name:        "cursor HTTP failure",
+			label:       "IDE",
+			source:      core.SourceLabel{Kind: core.SourceCursorSettings},
+			status:      http.StatusBadGateway,
+			body:        `{"detail":"upstream failed"}`,
+			wantTitle:   "Cursor gateway: HTTP request failed",
+			wantCheckID: "IDE.cursor_settings.gateway",
+			wantEvidence: []string{
+				"failure kind: http",
+				"HTTP status: 502",
+			},
+		},
+		{
+			name:        "VS Code invalid JSON",
+			label:       "IDE",
+			source:      core.SourceLabel{Kind: core.SourceVSCodeSettings},
+			status:      http.StatusOK,
+			body:        `{not-json`,
+			wantTitle:   "VS Code gateway: invalid response",
+			wantCheckID: "IDE.vscode_settings.gateway",
+			wantEvidence: []string{
+				"failure kind: invalid-json",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			baseURL := tt.baseURL
+			var client gateway.Client
+			if tt.status != 0 || tt.body != "" {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(tt.status)
+					_, _ = w.Write([]byte(tt.body))
+				}))
+				defer server.Close()
+				baseURL = server.URL
+				client = testGateway(server)
+			}
+
+			side := sideValidationContext{
+				name:    tt.source.String(),
+				source:  tt.source,
+				token:   "sk-goodtoken1234",
+				baseURL: baseURL,
+			}
+			validation := validateSideContext(context.Background(), side, Options{
+				NetworkChecks: true,
+				Gateway:       client,
+			}, tt.label)
+			if validation.GatewayFailure == nil {
+				t.Fatalf("GatewayFailure missing: %#v", validation)
+			}
+
+			finding := gatewayErrorFinding(gatewayFindingInput{
+				ID:            "test",
+				Prefix:        sideGatewayPrefix(validation.GatewayFailure.Source),
+				Scope:         validation.GatewayFailure.Name,
+				Err:           validation.GatewayFailure.Err,
+				Status:        core.StatusWARN,
+				RelatedChecks: []string{validation.GatewayFailure.CheckID},
+			})
+			if finding.Title != tt.wantTitle {
+				t.Fatalf("Title = %q, want %q", finding.Title, tt.wantTitle)
+			}
+			assertContains(t, finding.RelatedChecks, tt.wantCheckID)
+			for _, want := range tt.wantEvidence {
+				assertContains(t, finding.Evidence, want)
+			}
+		})
+	}
+}
+
 func TestRunBuildsGroupedIDEDriftFinding(t *testing.T) {
 	currentValues := map[string]string{core.VarAnthropicAuthToken: "sk-terminaltoken1234"}
 	cursorValues := map[string]string{core.VarAnthropicAuthToken: "sk-cursortoken1234"}
@@ -362,6 +459,48 @@ func TestRunConnectsGatewayAuthFindingToTokenConflict(t *testing.T) {
 
 	conflictFinding := requireFinding(t, result, "config-conflict.anthropic-auth-token")
 	assertContains(t, conflictFinding.RelatedChecks, "config-conflict.01.ANTHROPIC_AUTH_TOKEN")
+}
+
+func TestRunConnectsGatewayAuthFindingToIDEDrift(t *testing.T) {
+	server := newGatewayServer(t, []string{"claude-3-sonnet"})
+	defer server.Close()
+
+	read := testRead([]config.Source{
+		testSource(core.SourceLabel{Kind: core.SourceCurrentEnv}, allRequiredValues("sk-terminalbad1234", server.URL, "claude-3-sonnet"), ""),
+		testSource(core.SourceLabel{Kind: core.SourceCursorSettings, Path: "/home/ada/.config/Cursor/User/settings.json"}, map[string]string{core.VarAnthropicAuthToken: "sk-cursorbad1234"}, ""),
+		testSource(core.SourceLabel{Kind: core.SourceVSCodeSettings, Path: "/home/ada/.config/Code/User/settings.json"}, map[string]string{core.VarAnthropicAuthToken: "sk-vscodebad1234"}, ""),
+	})
+
+	result, err := Run(context.Background(), testSystem(nil), read, Options{
+		NetworkChecks: true,
+		Gateway:       testGateway(server),
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	gatewayFinding := requireFinding(t, result, "gateway.current")
+	if !strings.Contains(gatewayFinding.Summary, "configured token values differ") {
+		t.Fatalf("gateway finding summary = %q, want IDE drift connection", gatewayFinding.Summary)
+	}
+	assertContains(t, gatewayFinding.RelatedChecks, "gateway.validation.current-environment")
+	assertContains(t, gatewayFinding.RelatedChecks, "ide-config.01.ANTHROPIC_AUTH_TOKEN")
+	assertContains(t, gatewayFinding.RelatedChecks, "ide-config.02.ANTHROPIC_AUTH_TOKEN")
+	for _, checkID := range gatewayFinding.RelatedChecks {
+		if strings.HasPrefix(checkID, "config-conflict.") {
+			t.Fatalf("gateway finding unexpectedly linked config conflict check: %#v", gatewayFinding.RelatedChecks)
+		}
+	}
+	hasIDEEvidence := false
+	for _, evidence := range gatewayFinding.Evidence {
+		if strings.HasPrefix(evidence, "related IDE: ANTHROPIC_AUTH_TOKEN differs in ") {
+			hasIDEEvidence = true
+			break
+		}
+	}
+	if !hasIDEEvidence {
+		t.Fatalf("gateway finding missing related IDE evidence: %#v", gatewayFinding.Evidence)
+	}
 }
 
 func TestRunReportsCommandFailureAsWarning(t *testing.T) {

@@ -6,8 +6,6 @@ import (
 	"strings"
 )
 
-const maxExplanationDetailLen = 180
-
 type FailureExplanation struct {
 	Cause       string
 	Evidence    []string
@@ -23,7 +21,7 @@ func ExplainFailure(err error) FailureExplanation {
 	if !errors.As(err, &gatewayErr) {
 		return FailureExplanation{
 			Cause:       defaultFailureCause(),
-			Evidence:    []string{"reason: " + shortExplanationDetail(err.Error())},
+			Evidence:    explanationEvidence("reason", err.Error()),
 			Remediation: defaultFailureRemediation(),
 		}
 	}
@@ -61,9 +59,9 @@ func failureEvidence(err *Error) []string {
 		evidence = append(evidence, fmt.Sprintf("HTTP status: %d", err.StatusCode))
 	}
 	if err.Detail != "" {
-		evidence = append(evidence, "gateway message: "+shortExplanationDetail(err.Detail))
+		evidence = append(evidence, explanationEvidence("gateway message", err.Detail)...)
 	} else if err.Err != nil {
-		evidence = append(evidence, "gateway message: "+shortExplanationDetail(err.Err.Error()))
+		evidence = append(evidence, explanationEvidence("gateway message", err.Err.Error())...)
 	}
 	if err.Cached {
 		evidence = append(evidence, "cached failure: true")
@@ -117,10 +115,27 @@ func defaultFailureRemediation() string {
 	return "Inspect the gateway error, update the active gateway configuration, and rerun diagnostics."
 }
 
-func shortExplanationDetail(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) <= maxExplanationDetailLen {
-		return value
+func explanationEvidence(prefix, value string) []string {
+	value = conciseExplanationDetail(value)
+	if value == "" {
+		return nil
 	}
-	return value[:maxExplanationDetailLen-3] + "..."
+	return []string{prefix + ": " + value}
+}
+
+func conciseExplanationDetail(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	if containsNoisyLiteLLMDetail(value) {
+		return "gateway returned LiteLLM token verification diagnostics; review details for the full response"
+	}
+	return value
+}
+
+func containsNoisyLiteLLMDetail(value string) bool {
+	lower := strings.ToLower(value)
+	return strings.Contains(lower, "litellm_verificationtokentable") ||
+		strings.Contains(lower, "key hash")
 }

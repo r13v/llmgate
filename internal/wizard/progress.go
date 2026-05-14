@@ -24,7 +24,7 @@ func newProgressReporter(out io.Writer, env system.ProcessEnvironment, accessibl
 	terminal := outputIsTerminal(out)
 	return progressReporter{
 		out:     out,
-		animate: terminal && !accessible,
+		animate: terminal && !accessible && supportsTerminalControl(env),
 		log:     terminal,
 		color:   shouldUseANSI(out, env, accessible),
 	}
@@ -92,15 +92,22 @@ func shouldUseANSI(out io.Writer, env system.ProcessEnvironment, accessible bool
 	if accessible || !outputIsTerminal(out) {
 		return false
 	}
+	if !supportsTerminalControl(env) {
+		return false
+	}
 	if env != nil {
 		if _, ok := env.LookupEnv("NO_COLOR"); ok {
 			return false
 		}
-		if strings.EqualFold(env.Getenv("TERM"), "dumb") {
-			return false
-		}
 	}
 	return true
+}
+
+func supportsTerminalControl(env system.ProcessEnvironment) bool {
+	if env == nil {
+		return true
+	}
+	return !strings.EqualFold(env.Getenv("TERM"), "dumb")
 }
 
 func outputIsTerminal(out io.Writer) bool {

@@ -76,6 +76,39 @@ func TestTextRedactsShortUnknownSKTokens(t *testing.T) {
 	}
 }
 
+func TestTextRedactsGenericCredentialParameters(t *testing.T) {
+	input := strings.Join([]string{
+		"https://gateway.example.com/v1/models?api_key=plain-api-key-1234&token=query-token-5678#fragment",
+		"body api_key=body-api-key-2468",
+		`{"access_token":"json-access-token-1357"}`,
+		"refresh_token: refresh-token-8642",
+	}, "\n")
+
+	got := Text(input, Options{})
+	for _, notWant := range []string{
+		"plain-api-key-1234",
+		"query-token-5678",
+		"body-api-key-2468",
+		"json-access-token-1357",
+		"refresh-token-8642",
+	} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("redacted text leaked %q in:\n%s", notWant, got)
+		}
+	}
+	for _, want := range []string{
+		"api_key=***1234",
+		"token=***5678",
+		"api_key=***2468",
+		`"access_token":"***1357"`,
+		"refresh_token: ***8642",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("redacted text missing %q in:\n%s", want, got)
+		}
+	}
+}
+
 func TestShortenHomePathUnix(t *testing.T) {
 	tests := []struct {
 		name string

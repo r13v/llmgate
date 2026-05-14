@@ -366,7 +366,6 @@ func sideContextFromSource(source config.Source, global core.ResolvedConfig) sid
 	return sideValidationContext{
 		name:    source.Label.String(),
 		source:  source.Label,
-		values:  values,
 		models:  models,
 		token:   token.Value,
 		baseURL: baseURL.Value,

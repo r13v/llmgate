@@ -82,7 +82,6 @@ type probeEvaluation struct {
 type sideValidationContext struct {
 	name    string
 	source  core.SourceLabel
-	values  map[string]core.ResolvedValue
 	models  []core.ConfigValue
 	token   string
 	baseURL string

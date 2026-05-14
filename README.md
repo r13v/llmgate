@@ -167,12 +167,13 @@ restart your terminal and IDE.
 
 In the interactive wizard, the first diagnostic screen shows actionable
 findings before raw checks when a problem can be summarized. Gateway
-authentication failures, token conflicts across configuration sources, and IDE
-token drift are grouped with short `why`, `evidence`, and `fix` lines so
-repeated warnings do not hide the next step. Any warning or failure that is not
-covered by a finding is still shown, and `Review details` keeps the full
-check-level diagnostic evidence, including sanitized gateway response details
-where useful.
+authentication failures, gateway network/HTTP/response/model-probe failures,
+project and IDE gateway validation failures, managed-value conflicts across
+configuration sources, and IDE drift are grouped with short `why`, `evidence`,
+and `fix` lines so repeated warnings do not hide the next step. Any warning or
+failure that is not covered by a finding is still shown, and `Review details`
+keeps the full check-level diagnostic evidence, including sanitized gateway
+response details where useful.
 
 ## Build and Test
 

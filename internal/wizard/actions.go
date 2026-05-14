@@ -417,7 +417,7 @@ func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 		return
 	}
 
-	r.printDiagnosticChecks(result.Sections, knownSecrets, display, nil, false)
+	r.printDiagnosticCheckSummaries(result.Sections, knownSecrets, display)
 }
 
 func (r runner) printDiagnosticFindings(findings []core.DiagnosticFinding, knownSecrets []string, display displayOptions) {
@@ -470,6 +470,22 @@ func (r runner) printDiagnosticChecks(sections []core.DiagnosticSection, knownSe
 				}
 				_, _ = fmt.Fprintf(r.out, "  - %s\n", detail)
 			}
+		}
+	}
+}
+
+func (r runner) printDiagnosticCheckSummaries(sections []core.DiagnosticSection, knownSecrets []string, display displayOptions) {
+	for _, section := range sections {
+		for _, check := range section.Checks {
+			if check.Status != core.StatusWARN && check.Status != core.StatusFAIL {
+				continue
+			}
+			summary := check.Summary
+			if summary == "" {
+				summary = check.Title
+			}
+			summary = sanitizeText(summary, knownSecrets, display)
+			_, _ = fmt.Fprintf(r.out, "- %s: %s\n", colorStatus(check.Status, r.color), summary)
 		}
 	}
 }

@@ -200,8 +200,9 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	assertNotContains(t, rendered, token)
 	assertNotContains(t, rendered, "/home/ada")
 	assertContains(t, rendered, "~/")
-	assertContains(t, rendered, "[Model Probes / Probe]")
-	assertContains(t, rendered, "reason: model probe failed")
+	assertContains(t, rendered, "- WARN: probe failed for model")
+	assertNotContains(t, rendered, "[Model Probes / Probe]")
+	assertNotContains(t, rendered, "reason: model probe failed")
 }
 
 func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
@@ -228,6 +229,26 @@ func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
 					Title:   "claude --version",
 					Summary: "Claude Code CLI check failed",
 					Details: []string{"exit status 127"},
+				}},
+			},
+			{
+				Title: "Config Sources",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "config-sources.01",
+					Status:  core.StatusWARN,
+					Title:   "Malformed source",
+					Summary: "Failed to parse /home/ada/.claude/settings.json",
+					Details: []string{"raw value: " + token},
+				}},
+			},
+			{
+				Title: "Project Overrides",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "project-overrides.01",
+					Status:  core.StatusWARN,
+					Title:   "Project override",
+					Summary: "Project override differs from terminal config",
+					Details: []string{"path: /home/ada/project/.claude/settings.local.json"},
 				}},
 			},
 		},
@@ -257,6 +278,8 @@ func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
 	assertContains(t, rendered, "fix: Update the active token")
 	assertContains(t, rendered, "- WARN [Claude Code CLI / claude --version] Claude Code CLI check failed")
 	assertContains(t, rendered, "exit status 127")
+	assertContains(t, rendered, "- WARN [Config Sources / Malformed source] Failed to parse ~/.claude/settings.json")
+	assertContains(t, rendered, "- WARN [Project Overrides / Project override] Project override differs from terminal config")
 	assertNotContains(t, rendered, "gateway validation failed")
 	assertNotContains(t, rendered, "raw gateway detail")
 	assertNotContains(t, rendered, token)
@@ -274,7 +297,7 @@ func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
 func TestDiagnosticSummaryOmitsLongGatewayDetailThatReviewDetailsKeeps(t *testing.T) {
 	var output bytes.Buffer
 	token := "sk-longdetail1234567890"
-	longDetail := "gateway rejected token " + token + " from /home/ada/.cache/llmgate " +
+	longDetail := "Key Hash abc123 LiteLLM_VerificationTokenTable gateway rejected token " + token + " from /home/ada/.cache/llmgate " +
 		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
 	gatewayErr := &gateway.Error{
 		Kind:       gateway.FailureAuth,
@@ -319,6 +342,36 @@ func TestDiagnosticSummaryOmitsLongGatewayDetailThatReviewDetailsKeeps(t *testin
 	assertContains(t, reviewDetails, "sk-...7890")
 	assertContains(t, reviewDetails, "~/.cache/llmgate")
 	assertNotContains(t, reviewDetails, token)
+}
+
+func TestDiagnosticSummaryRedactsGatewayEvidenceBeforeTruncating(t *testing.T) {
+	var output bytes.Buffer
+	token := "plain-secret-token-1234567890"
+	detail := strings.Repeat("x", 170) + token + " tail"
+	explanation := gateway.ExplainFailure(&gateway.Error{
+		Kind:       gateway.FailureHTTP,
+		Operation:  "model list",
+		StatusCode: http.StatusBadGateway,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     detail,
+	})
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Findings: []core.DiagnosticFinding{{
+			ID:          "gateway.current",
+			Status:      core.StatusFAIL,
+			Title:       "Gateway: HTTP request failed",
+			Summary:     explanation.Cause,
+			Evidence:    explanation.Evidence,
+			Remediation: explanation.Remediation,
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, token[:7])
 }
 
 func TestDiagnosticSummaryRedactsAllFindingFields(t *testing.T) {
@@ -484,6 +537,11 @@ func TestProgressReporterEnablesStatusOutputOnlyForTTY(t *testing.T) {
 	accessible := newProgressReporter(pty.Slave(), env, true)
 	if accessible.animate || !accessible.log || accessible.color {
 		t.Fatalf("accessible TTY progress flags = animate:%t log:%t color:%t, want animate false, log true, color false", accessible.animate, accessible.log, accessible.color)
+	}
+
+	dumb := newProgressReporter(pty.Slave(), &testEnvironment{values: map[string]string{"TERM": "dumb"}}, false)
+	if dumb.animate || !dumb.log || dumb.color {
+		t.Fatalf("dumb TTY progress flags = animate:%t log:%t color:%t, want animate false, log true, color false", dumb.animate, dumb.log, dumb.color)
 	}
 }
 

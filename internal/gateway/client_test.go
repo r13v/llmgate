@@ -312,7 +312,7 @@ func TestExplainFailureUsesStructuredGatewayError(t *testing.T) {
 		Operation:  "model list",
 		StatusCode: http.StatusUnauthorized,
 		URL:        "https://gateway.example.com/v1/models",
-		Detail:     "gateway rejected token " + strings.Repeat("x", 240) + " LiteLLM_VerificationTokenTable",
+		Detail:     "Key Hash abc123 LiteLLM_VerificationTokenTable gateway rejected token " + strings.Repeat("x", 240),
 		Cached:     true,
 	}
 
@@ -336,14 +336,91 @@ func TestExplainFailureUsesStructuredGatewayError(t *testing.T) {
 	if message == "" {
 		t.Fatalf("Evidence missing gateway message: %#v", explanation.Evidence)
 	}
-	if len(strings.TrimPrefix(message, "gateway message: ")) > maxExplanationDetailLen {
-		t.Fatalf("gateway message was not shortened: %q", message)
-	}
 	if strings.Contains(message, "LiteLLM_VerificationTokenTable") {
-		t.Fatalf("gateway message kept long raw tail: %q", message)
+		t.Fatalf("gateway message kept noisy raw detail: %q", message)
+	}
+	if !strings.Contains(message, "review details for the full response") {
+		t.Fatalf("gateway message = %q, want concise noisy-detail summary", message)
 	}
 	if explanation.Remediation != "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override." {
 		t.Fatalf("Remediation = %q", explanation.Remediation)
+	}
+}
+
+func TestExplainFailureCoversFailureKinds(t *testing.T) {
+	tests := []struct {
+		name            string
+		kind            FailureKind
+		wantCause       string
+		wantRemediation string
+	}{
+		{
+			name:            "auth",
+			kind:            FailureAuth,
+			wantCause:       "The gateway rejected the configured ANTHROPIC_AUTH_TOKEN.",
+			wantRemediation: "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override.",
+		},
+		{
+			name:            "network",
+			kind:            FailureNetwork,
+			wantCause:       "llmgate could not reach the configured gateway.",
+			wantRemediation: "Check ANTHROPIC_BASE_URL, DNS, VPN/proxy, TLS, and network access.",
+		},
+		{
+			name:            "invalid url",
+			kind:            FailureInvalidURL,
+			wantCause:       "ANTHROPIC_BASE_URL is not a valid gateway URL.",
+			wantRemediation: "Set ANTHROPIC_BASE_URL to an http(s) LiteLLM gateway root or /v1 URL.",
+		},
+		{
+			name:            "invalid json",
+			kind:            FailureInvalidJSON,
+			wantCause:       "The gateway response was not OpenAI-compatible JSON.",
+			wantRemediation: "Inspect the gateway response and OpenAI-compatible model-list route.",
+		},
+		{
+			name:            "empty models",
+			kind:            FailureEmptyModels,
+			wantCause:       "The gateway returned no usable model IDs.",
+			wantRemediation: "Configure the gateway to expose at least one usable model ID.",
+		},
+		{
+			name:            "http",
+			kind:            FailureHTTP,
+			wantCause:       "The gateway returned a non-success HTTP response.",
+			wantRemediation: "Inspect the gateway/upstream logs, base URL, and selected model routing.",
+		},
+		{
+			name:            "unknown",
+			kind:            FailureKind("custom"),
+			wantCause:       defaultFailureCause(),
+			wantRemediation: defaultFailureRemediation(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			explanation := ExplainFailure(&Error{
+				Kind:       tt.kind,
+				Operation:  "model list",
+				StatusCode: http.StatusBadGateway,
+				URL:        "https://gateway.example.com/v1/models",
+				Detail:     "plain gateway detail",
+			})
+
+			if explanation.Cause != tt.wantCause {
+				t.Fatalf("Cause = %q, want %q", explanation.Cause, tt.wantCause)
+			}
+			if explanation.Remediation != tt.wantRemediation {
+				t.Fatalf("Remediation = %q, want %q", explanation.Remediation, tt.wantRemediation)
+			}
+			if tt.kind != "" && !containsString(explanation.Evidence, "failure kind: "+string(tt.kind)) {
+				t.Fatalf("Evidence missing failure kind %q: %#v", tt.kind, explanation.Evidence)
+			}
+			if !containsString(explanation.Evidence, "gateway message: plain gateway detail") {
+				t.Fatalf("Evidence missing gateway detail: %#v", explanation.Evidence)
+			}
+		})
 	}
 }
 
@@ -355,6 +432,13 @@ func TestExplainFailureHandlesPlainError(t *testing.T) {
 	}
 	if !containsString(explanation.Evidence, "reason: dial tcp failed") {
 		t.Fatalf("Evidence = %#v, want plain reason", explanation.Evidence)
+	}
+}
+
+func TestExplainFailureHandlesNil(t *testing.T) {
+	explanation := ExplainFailure(nil)
+	if explanation.Cause != "" || len(explanation.Evidence) != 0 || explanation.Remediation != "" {
+		t.Fatalf("ExplainFailure(nil) = %#v, want empty explanation", explanation)
 	}
 }
 

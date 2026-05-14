@@ -174,8 +174,10 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 - Modify: `README.md` if user-facing diagnostic behavior needs documentation
 - Modify: `docs/plans/20260514-structured-diagnostic-findings.md`
 
-- [ ] Update README diagnostics text only if the final output semantics changed enough to document.
-- [ ] Update this plan with any scope changes discovered during implementation.
+- [x] Update README diagnostics text only if the final output semantics changed enough to document.
+- [x] Update this plan with any scope changes discovered during implementation.
+
+Completion note: README diagnostics now documents the grouped first-screen finding behavior, uncovered check fallback, and `Review details` full-evidence path. No additional scope changes were discovered during final documentation.
 
 ## Technical Details
 - Proposed `DiagnosticFinding` shape:

@@ -114,17 +114,17 @@
 - Modify: `internal/wizard/actions.go`
 - Modify: `internal/wizard/wizard_test.go`
 
-- [ ] Add a mode/options parameter to `applyPlanAndFinalize` or split setup/repair finalization so setup can use new-session diagnostics without changing repair semantics.
-- [ ] Change the setup path to rerun diagnostics in new-session mode with failed gateway cache bypass.
-- [ ] Keep the repair path on the existing current-process final diagnostics mode unless this plan is explicitly expanded.
-- [ ] Ensure final `OK/WARN/FAIL`, `Configured`, `Configured with warnings`, and `Setup incomplete` are based only on the new-session diagnostic result.
-- [ ] Add a helper that compares the already-running process environment with the final new-session resolved config for managed values.
-- [ ] Print a `Current terminal note` only when process env managed values differ from the final new-session values.
-- [ ] Keep the restart line after successful or warning final results.
-- [ ] Add wizard tests covering note visibility and absence when env already matches.
-- [ ] Add a wizard test asserting the current-terminal note does not print raw old or new token values.
-- [ ] Add or update a wizard test proving repair final diagnostics still use the existing current-process mode.
-- [ ] Run relevant tests and confirm they pass before next task: `go test ./internal/wizard`.
+- [x] Add a mode/options parameter to `applyPlanAndFinalize` or split setup/repair finalization so setup can use new-session diagnostics without changing repair semantics.
+- [x] Change the setup path to rerun diagnostics in new-session mode with failed gateway cache bypass.
+- [x] Keep the repair path on the existing current-process final diagnostics mode unless this plan is explicitly expanded.
+- [x] Ensure final `OK/WARN/FAIL`, `Configured`, `Configured with warnings`, and `Setup incomplete` are based only on the new-session diagnostic result.
+- [x] Add a helper that compares the already-running process environment with the final new-session resolved config for managed values.
+- [x] Print a `Current terminal note` only when process env managed values differ from the final new-session values.
+- [x] Keep the restart line after successful or warning final results.
+- [x] Add wizard tests covering note visibility and absence when env already matches.
+- [x] Add a wizard test asserting the current-terminal note does not print raw old or new token values.
+- [x] Add or update a wizard test proving repair final diagnostics still use the existing current-process mode.
+- [x] Run relevant tests and confirm they pass before next task: `go test ./internal/wizard`.
 
 ### Task 4: Cover End-To-End Final Diagnostics Scenarios
 **Files:**

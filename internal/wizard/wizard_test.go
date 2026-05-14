@@ -11,10 +11,12 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/charmbracelet/x/xpty"
+	"github.com/r13v/llmgate/internal/apply"
 	"github.com/r13v/llmgate/internal/config"
 	"github.com/r13v/llmgate/internal/core"
 	"github.com/r13v/llmgate/internal/diagnose"
@@ -85,6 +87,180 @@ func TestAccessibleFreshSetupWritesSelectedTargetsAndRedactsToken(t *testing.T) 
 	}
 	assertContains(t, rendered, "Configured")
 	assertContains(t, rendered, "Restart your terminal and IDE")
+}
+
+func TestSetupFinalDiagnosticsUseNewSessionAndPrintCurrentTerminalNote(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	fileSystem := newWizardFileSystem()
+	var output bytes.Buffer
+	staleToken := "sk-oldtoken1234567890"
+	newValues := standardSetupValues(server.URL)
+	prompts := &scriptedPrompter{responses: []promptResponse{
+		{kind: "confirm", confirm: true},
+		{kind: "select", value: string(actionSetup)},
+		{kind: "confirm", confirm: false},
+		{kind: "input", value: newValues.AuthToken},
+		{kind: "input", value: newValues.BaseURL},
+		{kind: "confirm", confirm: true},
+		{kind: "multiselect", values: []string{"0", "1"}},
+		{kind: "confirm", confirm: true},
+	}}
+
+	err := Run(context.Background(), Options{
+		System: testSystem(fileSystem, map[string]string{
+			"SHELL":                    "/bin/zsh",
+			core.VarAnthropicAuthToken: staleToken,
+			core.VarAnthropicBaseURL:   server.URL,
+			core.VarAnthropicModel:     "claude-stale",
+		}),
+		Gateway:  testGateway(server),
+		Prompter: prompts,
+		Output:   &output,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: OK")
+	assertContains(t, rendered, "Configured")
+	assertContains(t, rendered, "Restart your terminal and IDE")
+	assertNotContains(t, rendered, "Setup incomplete")
+
+	note := currentTerminalNoteLine(rendered)
+	assertContains(t, note, "Current terminal note:")
+	assertNotContains(t, note, staleToken)
+	assertNotContains(t, note, newValues.AuthToken)
+}
+
+func TestSetupCurrentTerminalNoteOmittedWhenProcessEnvMatchesNewSession(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	fileSystem := newWizardFileSystem()
+	var output bytes.Buffer
+	values := standardSetupValues(server.URL)
+	prompts := &scriptedPrompter{responses: []promptResponse{
+		{kind: "confirm", confirm: true},
+		{kind: "select", value: string(actionSetup)},
+		{kind: "confirm", confirm: true},
+		{kind: "input", value: values.BaseURL},
+		{kind: "confirm", confirm: true},
+		{kind: "multiselect", values: []string{"0", "1"}},
+		{kind: "confirm", confirm: true},
+	}}
+
+	err := Run(context.Background(), Options{
+		System:   testSystem(fileSystem, standardSetupEnv(values)),
+		Gateway:  testGateway(server),
+		Prompter: prompts,
+		Output:   &output,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: OK")
+	assertContains(t, rendered, "Configured")
+	assertNotContains(t, rendered, "Current terminal note")
+}
+
+func TestSetupFinalDiagnosticsBypassCachedGatewayFailure(t *testing.T) {
+	var failModels atomic.Bool
+	var modelRequests atomic.Int64
+	failModels.Store(true)
+
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/v1/models" {
+			return false
+		}
+		modelRequests.Add(1)
+		if !failModels.Load() {
+			return false
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"detail":"temporary failure"}`))
+		return true
+	})
+	defer server.Close()
+
+	values := standardSetupValues(server.URL)
+	client := testGateway(server)
+	if _, err := client.ListModels(context.Background(), values.BaseURL, values.AuthToken, gateway.RequestOptions{}); err == nil {
+		t.Fatal("pre-cache ListModels() error = nil, want failure")
+	}
+	failModels.Store(false)
+
+	fileSystem := newWizardFileSystem()
+	sys := testSystem(fileSystem, map[string]string{"SHELL": "/bin/zsh"})
+	paths, err := sys.DetectPaths()
+	if err != nil {
+		t.Fatalf("DetectPaths() error = %v", err)
+	}
+	plan, err := apply.BuildSetupPlan(sys, paths, paths.WriteTargets[:2], values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	runner := newRunner(Options{
+		System:  sys,
+		Gateway: client,
+		Output:  &output,
+	})
+	if err := runner.applyPlanAndFinalize(context.Background(), plan, []string{values.AuthToken}, setupFinalizationOptions()); err != nil {
+		t.Fatalf("applyPlanAndFinalize() error = %v\n%s", err, output.String())
+	}
+
+	assertContains(t, output.String(), "Final diagnostics: OK")
+	if got := modelRequests.Load(); got != 2 {
+		t.Fatalf("model list requests = %d, want 2 to prove failed cache bypass", got)
+	}
+}
+
+func TestRepairFinalDiagnosticsKeepCurrentProcessMode(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	values := standardSetupValues(server.URL)
+	fileSystem := newWizardFileSystem()
+	fileSystem.addFile("/home/ada/.zshrc", []byte(strings.Join([]string{
+		"export ANTHROPIC_AUTH_TOKEN='" + values.AuthToken + "'",
+		"export ANTHROPIC_BASE_URL='" + values.BaseURL + "'",
+		"export ANTHROPIC_MODEL='claude-stale'",
+		"",
+	}, "\n")), 0o600)
+	var output bytes.Buffer
+	runner := newRunner(Options{
+		System:  testSystem(fileSystem, standardSetupEnv(values)),
+		Gateway: testGateway(server),
+		Prompter: &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+		}},
+		Output: &output,
+	})
+
+	initial, err := runner.readAndDiagnose(context.Background())
+	if err != nil {
+		t.Fatalf("readAndDiagnose() error = %v", err)
+	}
+	if !initial.Diagnostics.HasRepairableStaleShellModelWarnings() {
+		t.Fatalf("initial diagnostics had no repairable warnings:\n%s", diagnose.Render(initial.Diagnostics, diagnose.RenderOptions{}))
+	}
+
+	err = runner.runRepair(context.Background(), initial)
+	if err != nil {
+		t.Fatalf("runRepair() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: WARN")
+	assertContains(t, rendered, "Configured with warnings")
+	assertContains(t, rendered, "Restart your terminal and IDE")
+	assertNotContains(t, rendered, "Setup incomplete")
 }
 
 func TestModelPromptsRedactTokensInGatewayModelIDs(t *testing.T) {
@@ -870,6 +1046,32 @@ func replaceServerURL(responses []promptResponse, serverURL string) []promptResp
 
 func testGateway(server *httptest.Server) gateway.Client {
 	return gateway.Client{HTTPClient: server.Client(), Cache: gateway.NewCache()}
+}
+
+func standardSetupValues(baseURL string) core.SetupValues {
+	return core.SetupValues{
+		AuthToken:   "sk-goodtoken1234567890",
+		BaseURL:     baseURL,
+		Model:       "claude-sonnet-4",
+		HaikuModel:  "claude-haiku-4",
+		SonnetModel: "claude-sonnet-4",
+		OpusModel:   "claude-opus-4",
+	}
+}
+
+func standardSetupEnv(values core.SetupValues) map[string]string {
+	env := values.Map()
+	env["SHELL"] = "/bin/zsh"
+	return env
+}
+
+func currentTerminalNoteLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Current terminal note:") {
+			return line
+		}
+	}
+	return ""
 }
 
 func configReadForSummary(token string) config.ReadResult {

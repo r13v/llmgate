@@ -41,6 +41,11 @@ type runResult struct {
 	Diagnostics diagnose.Result
 }
 
+type finalizationOptions struct {
+	DiagnosticOptions        diagnose.Options
+	PrintCurrentTerminalNote bool
+}
+
 type displayOptions struct {
 	HomeDir string
 	GOOS    string
@@ -141,6 +146,10 @@ func newRunner(opts Options) runner {
 }
 
 func (r runner) readAndDiagnose(ctx context.Context) (runResult, error) {
+	return r.readAndDiagnoseWithOptions(ctx, diagnose.Options{})
+}
+
+func (r runner) readAndDiagnoseWithOptions(ctx context.Context, opts diagnose.Options) (runResult, error) {
 	read, err := config.Read(r.sys, true)
 	if err != nil {
 		return runResult{}, err
@@ -148,10 +157,15 @@ func (r runner) readAndDiagnose(ctx context.Context) (runResult, error) {
 	var diagnostics diagnose.Result
 	runDiagnostics := func() error {
 		var diagnoseErr error
+		opts.NetworkChecks = r.network
+		opts.Gateway = r.gateway
+		opts.CommandTimeout = r.command
 		diagnostics, diagnoseErr = diagnose.Run(ctx, r.sys, read, diagnose.Options{
-			NetworkChecks:  r.network,
-			Gateway:        r.gateway,
-			CommandTimeout: r.command,
+			NetworkChecks:            opts.NetworkChecks,
+			Gateway:                  opts.Gateway,
+			CommandTimeout:           opts.CommandTimeout,
+			CurrentMode:              opts.CurrentMode,
+			BypassFailedGatewayCache: opts.BypassFailedGatewayCache,
 		})
 		return diagnoseErr
 	}
@@ -342,7 +356,7 @@ func (r runner) selectTargetsAndApplySetup(ctx context.Context, paths system.Dis
 			continue
 		}
 
-		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken})
+		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken}, setupFinalizationOptions())
 	}
 }
 
@@ -371,10 +385,20 @@ func (r runner) runRepair(ctx context.Context, result runResult) error {
 		_, _ = fmt.Fprintln(r.out, "No files were changed.")
 		return nil
 	}
-	return r.applyPlanAndFinalize(ctx, plan, nil)
+	return r.applyPlanAndFinalize(ctx, plan, nil, finalizationOptions{})
 }
 
-func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string) error {
+func setupFinalizationOptions() finalizationOptions {
+	return finalizationOptions{
+		DiagnosticOptions: diagnose.Options{
+			CurrentMode:              config.CurrentModeNewSession,
+			BypassFailedGatewayCache: true,
+		},
+		PrintCurrentTerminalNote: true,
+	}
+}
+
+func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string, opts finalizationOptions) error {
 	result, err := apply.Apply(r.sys, plan, r.apply)
 	_, _ = fmt.Fprint(r.out, apply.RenderResult(result, apply.RenderOptions{
 		KnownSecrets: knownSecrets,
@@ -385,11 +409,14 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 		return err
 	}
 
-	final, err := r.readAndDiagnose(ctx)
+	final, err := r.readAndDiagnoseWithOptions(ctx, opts.DiagnosticOptions)
 	if err != nil {
 		return err
 	}
 	r.printDiagnosticSummary("Final diagnostics", final.Diagnostics)
+	if opts.PrintCurrentTerminalNote {
+		r.printCurrentTerminalNote(final.Diagnostics)
+	}
 	switch final.Diagnostics.Status() {
 	case core.StatusFAIL:
 		_, _ = fmt.Fprintln(r.out, "Setup incomplete")
@@ -402,6 +429,39 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 	}
 	_, _ = fmt.Fprintln(r.out, "Restart your terminal and IDE for changes to take effect.")
 	return nil
+}
+
+func (r runner) printCurrentTerminalNote(result diagnose.Result) {
+	if !currentTerminalDiffersFromNewSession(result) {
+		return
+	}
+	_, _ = fmt.Fprintln(r.out, "Current terminal note: already-running process environment differs from new terminal session for managed llmgate variables. Restart this terminal before relying on its environment values.")
+}
+
+func currentTerminalDiffersFromNewSession(result diagnose.Result) bool {
+	currentEnv := map[string]core.ConfigValue{}
+	for _, source := range result.Read.Sources {
+		if source.Label.Kind != core.SourceCurrentEnv {
+			continue
+		}
+		for name, value := range source.Values {
+			if core.IsManaged(name) {
+				currentEnv[name] = value
+			}
+		}
+	}
+
+	for _, name := range core.AllManagedNames() {
+		envValue, envOK := currentEnv[name]
+		sessionValue, sessionOK := result.Resolution.Current.Get(name)
+		if envOK != sessionOK {
+			return true
+		}
+		if envOK && sessionOK && envValue.Value != sessionValue.Value {
+			return true
+		}
+	}
+	return false
 }
 
 func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {

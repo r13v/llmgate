@@ -7,6 +7,8 @@ import (
 
 	"github.com/r13v/llmgate/internal/config"
 	"github.com/r13v/llmgate/internal/core"
+	"github.com/r13v/llmgate/internal/gateway"
+	"github.com/r13v/llmgate/internal/system"
 )
 
 func TestRenderRedactsSecretsAndShortensHomePath(t *testing.T) {
@@ -73,4 +75,64 @@ func TestRenderKeepsFullReportCheckBasedWhenFindingsExist(t *testing.T) {
 	if strings.Contains(report, "Gateway: token rejected") || strings.Contains(report, "The short finding summary") {
 		t.Fatalf("report rendered findings before full-report support was added:\n%s", report)
 	}
+}
+
+func TestRenderKeepsSanitizedGatewayDetailInFullReport(t *testing.T) {
+	token := "sk-reportsecret1234567890"
+	longDetail := "gateway rejected token " + token + " from /home/ada/.cache/llmgate " +
+		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
+	gatewayErr := &gateway.Error{
+		Kind:       gateway.FailureAuth,
+		Operation:  "model list",
+		StatusCode: 401,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     longDetail,
+	}
+	result := Result{
+		Read: configReadForReport(token),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Title:   "Gateway validation",
+				Status:  core.StatusFAIL,
+				Summary: "gateway validation failed",
+				Details: []string{"reason: " + gatewayErr.Error()},
+			}},
+		}},
+	}
+
+	report := Render(result, RenderOptions{})
+
+	if !strings.Contains(report, "LiteLLM_VerificationTokenTable") {
+		t.Fatalf("report omitted full gateway detail:\n%s", report)
+	}
+	if strings.Contains(report, token) || strings.Contains(report, "/home/ada") {
+		t.Fatalf("report leaked unsanitized detail:\n%s", report)
+	}
+	if !strings.Contains(report, "sk-...7890") || !strings.Contains(report, "~/.cache/llmgate") {
+		t.Fatalf("report missing sanitized gateway detail:\n%s", report)
+	}
+}
+
+func configReadForReport(token string) config.ReadResult {
+	label := core.SourceLabel{Kind: core.SourceClaudeUserSettings, Path: "/home/ada/.claude/settings.json"}
+	return config.ReadResult{
+		Paths: configTestPaths(),
+		Sources: []config.Source{{
+			Label: label,
+			Values: map[string]core.ConfigValue{
+				core.VarAnthropicAuthToken: {
+					Name:   core.VarAnthropicAuthToken,
+					Value:  token,
+					Source: label,
+					Secret: true,
+				},
+			},
+		}},
+	}
+}
+
+func configTestPaths() system.DiscoveredPaths {
+	return system.DiscoveredPaths{HomeDir: "/home/ada", GOOS: "linux"}
 }

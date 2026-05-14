@@ -2,7 +2,6 @@ package wizard
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -176,40 +175,24 @@ func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, tok
 }
 
 func gatewayFailureDescription(err error) string {
-	lines := []string{err.Error()}
-	var gatewayErr *gateway.Error
-	if !errors.As(err, &gatewayErr) {
-		return strings.Join(lines, "\n")
+	explanation := gateway.ExplainFailure(err)
+	var lines []string
+	if explanation.Cause != "" {
+		lines = append(lines, "Cause: "+explanation.Cause)
 	}
-	if gatewayErr.URL != "" {
-		lines = append(lines, "Request URL: "+gatewayErr.URL)
+	for _, evidence := range explanation.Evidence {
+		if evidence == "" {
+			continue
+		}
+		lines = append(lines, "Evidence: "+evidence)
 	}
-	if gatewayErr.Kind != "" {
-		lines = append(lines, "Failure kind: "+string(gatewayErr.Kind))
+	if explanation.Remediation != "" {
+		lines = append(lines, "Fix: "+explanation.Remediation)
 	}
-	if meaning := gatewayRecoveryMeaning(gatewayErr.Kind); meaning != "" {
-		lines = append(lines, "Meaning: "+meaning)
+	if len(lines) == 0 && err != nil {
+		lines = append(lines, err.Error())
 	}
 	return strings.Join(lines, "\n")
-}
-
-func gatewayRecoveryMeaning(kind gateway.FailureKind) string {
-	switch kind {
-	case gateway.FailureAuth:
-		return "the gateway rejected the token"
-	case gateway.FailureNetwork:
-		return "llmgate could not reach the gateway"
-	case gateway.FailureHTTP:
-		return "the gateway returned a non-success HTTP response"
-	case gateway.FailureInvalidJSON:
-		return "the gateway response was not OpenAI-compatible JSON"
-	case gateway.FailureEmptyModels:
-		return "the gateway returned no usable model IDs"
-	case gateway.FailureInvalidURL:
-		return "the base URL is malformed"
-	default:
-		return ""
-	}
 }
 
 func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendation gateway.Recommendation, token string, display displayOptions) (bool, error) {

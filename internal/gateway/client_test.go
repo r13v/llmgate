@@ -306,6 +306,58 @@ func TestSanitizedDetailsAreTruncated(t *testing.T) {
 	}
 }
 
+func TestExplainFailureUsesStructuredGatewayError(t *testing.T) {
+	err := &Error{
+		Kind:       FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     "gateway rejected token " + strings.Repeat("x", 240) + " LiteLLM_VerificationTokenTable",
+		Cached:     true,
+	}
+
+	explanation := ExplainFailure(err)
+
+	if explanation.Cause != "The gateway rejected the configured ANTHROPIC_AUTH_TOKEN." {
+		t.Fatalf("Cause = %q", explanation.Cause)
+	}
+	for _, want := range []string{
+		"operation: model list",
+		"request URL: https://gateway.example.com/v1/models",
+		"failure kind: auth",
+		"HTTP status: 401",
+		"cached failure: true",
+	} {
+		if !containsString(explanation.Evidence, want) {
+			t.Fatalf("Evidence missing %q: %#v", want, explanation.Evidence)
+		}
+	}
+	message := evidenceWithPrefix(explanation.Evidence, "gateway message: ")
+	if message == "" {
+		t.Fatalf("Evidence missing gateway message: %#v", explanation.Evidence)
+	}
+	if len(strings.TrimPrefix(message, "gateway message: ")) > maxExplanationDetailLen {
+		t.Fatalf("gateway message was not shortened: %q", message)
+	}
+	if strings.Contains(message, "LiteLLM_VerificationTokenTable") {
+		t.Fatalf("gateway message kept long raw tail: %q", message)
+	}
+	if explanation.Remediation != "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override." {
+		t.Fatalf("Remediation = %q", explanation.Remediation)
+	}
+}
+
+func TestExplainFailureHandlesPlainError(t *testing.T) {
+	explanation := ExplainFailure(errors.New("dial tcp failed"))
+
+	if explanation.Cause == "" || explanation.Remediation == "" {
+		t.Fatalf("explanation missing cause/remediation: %#v", explanation)
+	}
+	if !containsString(explanation.Evidence, "reason: dial tcp failed") {
+		t.Fatalf("Evidence = %#v, want plain reason", explanation.Evidence)
+	}
+}
+
 func TestResponseBodySizeLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -542,6 +594,24 @@ func assertFailure(t *testing.T, err error, want FailureKind) *Error {
 		t.Fatalf("error kind = %s, want %s: %v", gatewayErr.Kind, want, gatewayErr)
 	}
 	return gatewayErr
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceWithPrefix(values []string, prefix string) string {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return value
+		}
+	}
+	return ""
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

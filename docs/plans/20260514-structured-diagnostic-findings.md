@@ -152,12 +152,12 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 - Modify: `internal/diagnose/report_test.go`
 - Modify: `internal/wizard/wizard_test.go`
 
-- [ ] Keep `Review details` rendering sections/checks with full evidence, including raw gateway detail where useful and redacted.
-- [ ] Add a shared gateway-error explanation helper that accepts an error or `gateway.Error` and returns concise cause/evidence/remediation text.
-- [ ] Use the shared helper from both finding construction and the gateway recovery prompt; do not pass `diagnose.Result` or findings into prompt code.
-- [ ] Add explicit tests that first-screen summary omits long raw gateway text while `Review details` still contains sanitized detail.
-- [ ] Add redaction tests for finding summary, cause, remediation, and evidence.
-- [ ] Run focused report and wizard tests before next task.
+- [x] Keep `Review details` rendering sections/checks with full evidence, including raw gateway detail where useful and redacted.
+- [x] Add a shared gateway-error explanation helper that accepts an error or `gateway.Error` and returns concise cause/evidence/remediation text.
+- [x] Use the shared helper from both finding construction and the gateway recovery prompt; do not pass `diagnose.Result` or findings into prompt code.
+- [x] Add explicit tests that first-screen summary omits long raw gateway text while `Review details` still contains sanitized detail.
+- [x] Add redaction tests for finding summary, cause, remediation, and evidence.
+- [x] Run focused report and wizard tests before next task.
 
 ### Task 6: Verify Acceptance Criteria
 **Files:**

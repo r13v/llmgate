@@ -121,6 +121,7 @@ func gatewayErrorFinding(input gatewayFindingInput) core.DiagnosticFinding {
 		relatedChecks = append(relatedChecks, input.TokenSignals.CheckIDs...)
 	}
 
+	explanation := gateway.ExplainFailure(input.Err)
 	evidence := make([]string, 0)
 	if input.Scope != "" {
 		evidence = append(evidence, "context: "+input.Scope)
@@ -128,7 +129,7 @@ func gatewayErrorFinding(input gatewayFindingInput) core.DiagnosticFinding {
 	if input.Subject != "" {
 		evidence = append(evidence, "subject: "+input.Subject)
 	}
-	evidence = append(evidence, gatewayErrorEvidence(input.Err)...)
+	evidence = append(evidence, explanation.Evidence...)
 	if connectedTokenProblem {
 		evidence = append(evidence, input.TokenSignals.Evidence...)
 	}
@@ -137,9 +138,9 @@ func gatewayErrorFinding(input gatewayFindingInput) core.DiagnosticFinding {
 		ID:            input.ID,
 		Status:        input.Status,
 		Title:         gatewayFindingTitle(input.Prefix, input.Err, input.Subject != ""),
-		Summary:       gatewayFindingSummary(input.Err, connectedTokenProblem, input.Subject),
+		Summary:       gatewayFindingSummary(input.Err, explanation, connectedTokenProblem, input.Subject),
 		Evidence:      uniqueStrings(evidence),
-		Remediation:   gatewayFindingRemediation(input.Err, connectedTokenProblem),
+		Remediation:   gatewayFindingRemediation(explanation, connectedTokenProblem),
 		RelatedChecks: uniqueStrings(relatedChecks),
 	}
 }
@@ -174,85 +175,27 @@ func gatewayFindingTitle(prefix string, err error, probe bool) string {
 	return prefix + ": validation failed"
 }
 
-func gatewayFindingSummary(err error, connectedTokenProblem bool, subject string) string {
+func gatewayFindingSummary(err error, explanation gateway.FailureExplanation, connectedTokenProblem bool, subject string) string {
 	if connectedTokenProblem {
 		return "The gateway rejected ANTHROPIC_AUTH_TOKEN, and configured token values differ across other sources."
 	}
 
 	var gatewayErr *gateway.Error
-	if errors.As(err, &gatewayErr) {
-		switch gatewayErr.Kind {
-		case gateway.FailureAuth:
-			return "The gateway rejected the configured ANTHROPIC_AUTH_TOKEN."
-		case gateway.FailureNetwork:
-			return "llmgate could not reach the configured gateway."
-		case gateway.FailureInvalidURL:
-			return "ANTHROPIC_BASE_URL is not a valid gateway URL."
-		case gateway.FailureInvalidJSON:
-			return "The gateway response was not OpenAI-compatible JSON."
-		case gateway.FailureEmptyModels:
-			return "The gateway returned no usable model IDs."
-		case gateway.FailureHTTP:
-			if subject != "" {
-				return "The gateway rejected the probe for " + subject + "."
-			}
-			return "The gateway returned a non-success HTTP response."
-		}
+	if subject != "" && errors.As(err, &gatewayErr) && gatewayErr.Kind == gateway.FailureHTTP {
+		return "The gateway rejected the probe for " + subject + "."
+	}
+	if explanation.Cause != "" {
+		return explanation.Cause
 	}
 	return "Gateway validation failed before llmgate could verify the configuration."
 }
 
-func gatewayErrorEvidence(err error) []string {
-	var gatewayErr *gateway.Error
-	if !errors.As(err, &gatewayErr) {
-		return []string{"reason: " + err.Error()}
-	}
-
-	var evidence []string
-	if gatewayErr.Operation != "" {
-		evidence = append(evidence, "operation: "+gatewayErr.Operation)
-	}
-	if gatewayErr.URL != "" {
-		evidence = append(evidence, "request URL: "+gatewayErr.URL)
-	}
-	if gatewayErr.Kind != "" {
-		evidence = append(evidence, "failure kind: "+string(gatewayErr.Kind))
-	}
-	if gatewayErr.StatusCode != 0 {
-		evidence = append(evidence, fmt.Sprintf("HTTP status: %d", gatewayErr.StatusCode))
-	}
-	if gatewayErr.Detail != "" {
-		evidence = append(evidence, "gateway message: "+shortEvidence(gatewayErr.Detail))
-	} else if gatewayErr.Err != nil {
-		evidence = append(evidence, "gateway message: "+shortEvidence(gatewayErr.Err.Error()))
-	}
-	if gatewayErr.Cached {
-		evidence = append(evidence, "cached failure: true")
-	}
-	return evidence
-}
-
-func gatewayFindingRemediation(err error, connectedTokenProblem bool) string {
+func gatewayFindingRemediation(explanation gateway.FailureExplanation, connectedTokenProblem bool) string {
 	if connectedTokenProblem {
 		return "Choose one active ANTHROPIC_AUTH_TOKEN, update the gateway-facing source, and remove stale token overrides."
 	}
-
-	var gatewayErr *gateway.Error
-	if errors.As(err, &gatewayErr) {
-		switch gatewayErr.Kind {
-		case gateway.FailureAuth:
-			return "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override."
-		case gateway.FailureNetwork:
-			return "Check ANTHROPIC_BASE_URL, DNS, VPN/proxy, TLS, and network access."
-		case gateway.FailureInvalidURL:
-			return "Set ANTHROPIC_BASE_URL to an http(s) LiteLLM gateway root or /v1 URL."
-		case gateway.FailureInvalidJSON:
-			return "Inspect the gateway response and OpenAI-compatible model-list route."
-		case gateway.FailureEmptyModels:
-			return "Configure the gateway to expose at least one usable model ID."
-		case gateway.FailureHTTP:
-			return "Inspect the gateway/upstream logs, base URL, and selected model routing."
-		}
+	if explanation.Remediation != "" {
+		return explanation.Remediation
 	}
 	return "Inspect the gateway error, update the active gateway configuration, and rerun diagnostics."
 }
@@ -480,15 +423,6 @@ func findingSlug(value string) string {
 		}
 	}
 	return strings.Trim(builder.String(), "-")
-}
-
-func shortEvidence(value string) string {
-	value = strings.TrimSpace(value)
-	const maxEvidenceLen = 180
-	if len(value) <= maxEvidenceLen {
-		return value
-	}
-	return value[:maxEvidenceLen-3] + "..."
 }
 
 func sortedKeys(values map[string]bool) []string {

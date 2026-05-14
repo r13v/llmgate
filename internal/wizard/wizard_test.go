@@ -269,6 +269,82 @@ func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
 	}
 }
 
+func TestDiagnosticSummaryOmitsLongGatewayDetailThatReviewDetailsKeeps(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-longdetail1234567890"
+	longDetail := "gateway rejected token " + token + " from /home/ada/.cache/llmgate " +
+		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
+	gatewayErr := &gateway.Error{
+		Kind:       gateway.FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     longDetail,
+	}
+	explanation := gateway.ExplainFailure(gatewayErr)
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Title:   "Gateway validation",
+				Status:  core.StatusFAIL,
+				Summary: "gateway validation failed",
+				Details: []string{"reason: " + gatewayErr.Error()},
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:            "gateway.current",
+			Status:        core.StatusFAIL,
+			Title:         "Gateway: token rejected",
+			Summary:       explanation.Cause,
+			Evidence:      explanation.Evidence,
+			Remediation:   explanation.Remediation,
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+	summary := output.String()
+	reviewDetails := diagnose.Render(result, diagnose.RenderOptions{})
+
+	assertContains(t, summary, "- FAIL Gateway: token rejected")
+	assertContains(t, summary, "gateway message:")
+	assertNotContains(t, summary, "LiteLLM_VerificationTokenTable")
+	assertNotContains(t, summary, token)
+	assertContains(t, reviewDetails, "LiteLLM_VerificationTokenTable")
+	assertContains(t, reviewDetails, "sk-...7890")
+	assertContains(t, reviewDetails, "~/.cache/llmgate")
+	assertNotContains(t, reviewDetails, token)
+}
+
+func TestDiagnosticSummaryRedactsAllFindingFields(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-findingsecret1234567890"
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Findings: []core.DiagnosticFinding{{
+			ID:          "gateway.current",
+			Status:      core.StatusFAIL,
+			Title:       "Gateway: token rejected " + token + " at /home/ada/.claude/settings.json",
+			Summary:     "Cause references " + token + " at /home/ada/.claude/settings.json",
+			Evidence:    []string{"request URL: https://gateway.example.com/v1/models?api_key=" + token, "path: /home/ada/.cache/llmgate"},
+			Remediation: "Update " + token + " in /home/ada/.zshrc",
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, "/home/ada")
+	assertContains(t, rendered, "sk-...7890")
+	assertContains(t, rendered, "~/.claude/settings.json")
+	assertContains(t, rendered, "~/.cache/llmgate")
+	assertContains(t, rendered, "~/.zshrc")
+}
+
 func TestDiagnosticSummaryColorsOnlyStatusTokens(t *testing.T) {
 	var output bytes.Buffer
 	result := diagnose.Result{
@@ -298,6 +374,35 @@ func TestDiagnosticSummaryColorsOnlyStatusTokens(t *testing.T) {
 	assertContains(t, rendered, "- \x1b[31mFAIL\x1b[0m Gateway: token rejected")
 	assertNotContains(t, rendered, "\x1b[31mGateway")
 	assertNotContains(t, rendered, "\x1b[31mThe gateway")
+}
+
+func TestGatewayRecoveryPromptUsesConciseRedactedGatewayExplanation(t *testing.T) {
+	token := "sk-promptsecret1234567890"
+	longDetail := "gateway rejected token " + token + " " +
+		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
+	prompts := &recordingPrompter{selectResponses: []string{string(gatewayRecoveryEdit)}}
+
+	got, err := promptGatewayRecovery(context.Background(), prompts, &gateway.Error{
+		Kind:       gateway.FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models?api_key=" + token,
+		Detail:     longDetail,
+	}, token, displayOptions{HomeDir: "/home/ada", GOOS: "linux"})
+	if err != nil {
+		t.Fatalf("promptGatewayRecovery() error = %v", err)
+	}
+	if got != gatewayRecoveryEdit {
+		t.Fatalf("recovery = %q, want edit", got)
+	}
+
+	description := strings.Join(prompts.descriptions, "\n")
+	assertContains(t, description, "Cause: The gateway rejected the configured ANTHROPIC_AUTH_TOKEN.")
+	assertContains(t, description, "Evidence: request URL: https://gateway.example.com/v1/models")
+	assertContains(t, description, "Evidence: HTTP status: 401")
+	assertContains(t, description, "Fix: Update ANTHROPIC_AUTH_TOKEN")
+	assertNotContains(t, description, "LiteLLM_VerificationTokenTable")
+	assertNotContains(t, description, token)
 }
 
 func TestProgressReporterIsSilentForNonTerminalOutput(t *testing.T) {

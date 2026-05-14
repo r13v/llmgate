@@ -114,6 +114,17 @@ func TestRunFailsWhenNoUsableGatewayContext(t *testing.T) {
 	if !checkSummaryStatus(result, "Gateway (current environment)", "gateway validation failed", core.StatusFAIL) {
 		t.Fatalf("current gateway failure was not FAIL:\n%s", Render(result, RenderOptions{}))
 	}
+	rendered := Render(result, RenderOptions{})
+	for _, want := range []string{
+		"reason: model list failed: auth HTTP 401",
+		"request URL: " + server.URL + "/v1/models",
+		"failure kind: auth",
+		"what it means: the gateway rejected the configured token",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("gateway failure details missing %q:\n%s", want, rendered)
+		}
+	}
 }
 
 func TestRunProbesAvailableModelsWhenAnotherSelectedModelIsUnavailable(t *testing.T) {

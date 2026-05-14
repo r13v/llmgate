@@ -47,13 +47,15 @@ type displayOptions struct {
 }
 
 type runner struct {
-	sys     system.System
-	gateway gateway.Client
-	prompts Prompter
-	out     io.Writer
-	network bool
-	apply   apply.ApplyOptions
-	command time.Duration
+	sys      system.System
+	gateway  gateway.Client
+	prompts  Prompter
+	out      io.Writer
+	network  bool
+	apply    apply.ApplyOptions
+	command  time.Duration
+	color    bool
+	progress progressReporter
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -96,7 +98,7 @@ func Run(ctx context.Context, opts Options) error {
 		case actionRepair:
 			return r.runRepair(ctx, result)
 		case actionReview:
-			_, _ = fmt.Fprint(r.out, diagnose.Render(result.Diagnostics, diagnose.RenderOptions{}))
+			_, _ = fmt.Fprint(r.out, diagnose.Render(result.Diagnostics, diagnose.RenderOptions{Color: r.color}))
 			return nil
 		case actionExit:
 			_, _ = fmt.Fprintln(r.out, "No files were changed.")
@@ -124,14 +126,17 @@ func newRunner(opts Options) runner {
 	if client.Cache == nil {
 		client.Cache = gateway.NewCache()
 	}
+	color := shouldUseANSI(out, opts.System.Env, opts.Accessible)
 	return runner{
-		sys:     opts.System,
-		gateway: client,
-		prompts: prompts,
-		out:     out,
-		network: !opts.SkipNetworkChecks,
-		apply:   opts.ApplyOptions,
-		command: opts.CommandTimeout,
+		sys:      opts.System,
+		gateway:  client,
+		prompts:  prompts,
+		out:      out,
+		network:  !opts.SkipNetworkChecks,
+		apply:    opts.ApplyOptions,
+		command:  opts.CommandTimeout,
+		color:    color,
+		progress: newProgressReporter(out, opts.System.Env, opts.Accessible),
 	}
 }
 
@@ -140,11 +145,21 @@ func (r runner) readAndDiagnose(ctx context.Context) (runResult, error) {
 	if err != nil {
 		return runResult{}, err
 	}
-	diagnostics, err := diagnose.Run(ctx, r.sys, read, diagnose.Options{
-		NetworkChecks:  r.network,
-		Gateway:        r.gateway,
-		CommandTimeout: r.command,
-	})
+	var diagnostics diagnose.Result
+	runDiagnostics := func() error {
+		var diagnoseErr error
+		diagnostics, diagnoseErr = diagnose.Run(ctx, r.sys, read, diagnose.Options{
+			NetworkChecks:  r.network,
+			Gateway:        r.gateway,
+			CommandTimeout: r.command,
+		})
+		return diagnoseErr
+	}
+	if r.network {
+		err = r.progress.Run("Running diagnostics; network checks may list gateway models and send tiny ping probes.", runDiagnostics)
+	} else {
+		err = runDiagnostics()
+	}
 	if err != nil {
 		return runResult{}, err
 	}
@@ -174,7 +189,11 @@ gatewayLoop:
 		var modelList gateway.ModelListResult
 		for {
 			var err error
-			modelList, err = r.gateway.ListModels(ctx, baseURL, token, gateway.RequestOptions{BypassFailedCache: bypassGatewayFailure})
+			err = r.progress.Run(gatewayModelListProgressMessage(baseURL, token, display), func() error {
+				var listErr error
+				modelList, listErr = r.gateway.ListModels(ctx, baseURL, token, gateway.RequestOptions{BypassFailedCache: bypassGatewayFailure})
+				return listErr
+			})
 			if err == nil {
 				break
 			}
@@ -278,7 +297,11 @@ func (r runner) chooseModels(ctx context.Context, models []string, defaults core
 
 func (r runner) validateSelectedModels(ctx context.Context, values core.SetupValues) error {
 	for _, model := range uniqueModels(values) {
-		if _, err := r.gateway.ProbeModel(ctx, values.BaseURL, values.AuthToken, model, gateway.RequestOptions{BypassFailedCache: true}); err != nil {
+		err := r.progress.Run(gatewayProbeProgressMessage(values.BaseURL, values.AuthToken, model, displayOptions{}), func() error {
+			_, probeErr := r.gateway.ProbeModel(ctx, values.BaseURL, values.AuthToken, model, gateway.RequestOptions{BypassFailedCache: true})
+			return probeErr
+		})
+		if err != nil {
 			return err
 		}
 	}
@@ -371,7 +394,7 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 	switch final.Diagnostics.Status() {
 	case core.StatusFAIL:
 		_, _ = fmt.Fprintln(r.out, "Setup incomplete")
-		_, _ = fmt.Fprint(r.out, diagnose.Render(final.Diagnostics, diagnose.RenderOptions{}))
+		_, _ = fmt.Fprint(r.out, diagnose.Render(final.Diagnostics, diagnose.RenderOptions{Color: r.color}))
 		return ErrSetupIncomplete
 	case core.StatusOK:
 		_, _ = fmt.Fprintln(r.out, "Configured")
@@ -385,7 +408,7 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 	display := displayOptions{HomeDir: result.Read.Paths.HomeDir, GOOS: result.Read.Paths.GOOS}
 	knownSecrets := diagnose.KnownSecrets(result)
-	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, result.Status())
+	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, colorStatus(result.Status(), r.color))
 	for _, section := range result.Sections {
 		for _, check := range section.Checks {
 			if check.Status != core.StatusWARN && check.Status != core.StatusFAIL {
@@ -396,9 +419,23 @@ func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 				summary = check.Title
 			}
 			summary = sanitizeText(summary, knownSecrets, display)
-			_, _ = fmt.Fprintf(r.out, "- %s: %s\n", check.Status, summary)
+			location := diagnosticLocation(section.Title, check.Title, summary)
+			_, _ = fmt.Fprintf(r.out, "- %s [%s] %s\n", colorStatus(check.Status, r.color), sanitizeText(location, knownSecrets, display), summary)
+			for _, detail := range check.Details {
+				if detail == "" {
+					continue
+				}
+				_, _ = fmt.Fprintf(r.out, "  - %s\n", sanitizeText(detail, knownSecrets, display))
+			}
 		}
 	}
+}
+
+func diagnosticLocation(sectionTitle, checkTitle, summary string) string {
+	if checkTitle == "" || checkTitle == summary || checkTitle == sectionTitle {
+		return sectionTitle
+	}
+	return sectionTitle + " / " + checkTitle
 }
 
 func setupDefaults(resolution config.Resolution) credentialDefaults {

@@ -1,6 +1,7 @@
 package diagnose
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -280,7 +281,7 @@ func buildGatewaySection(evaluation contextEvaluation, multiple, hasOtherUsable 
 	case evaluation.gatewayErr != nil:
 		status = downgradedStatus(core.StatusFAIL, hasOtherUsable)
 		summary = "gateway validation failed"
-		details = append(details, evaluation.gatewayErr.Error())
+		details = append(details, gatewayFailureDetails(evaluation.gatewayErr)...)
 		if hasOtherUsable {
 			details = append(details, "another configuration context is valid")
 		}
@@ -383,7 +384,7 @@ func buildProbesSection(evaluation contextEvaluation, multiple, hasOtherUsable b
 			if probe.err != nil {
 				status = downgradedStatus(core.StatusFAIL, hasOtherUsable)
 				summary = fmt.Sprintf("probe failed for model %q", probe.model)
-				details = []string{probe.err.Error()}
+				details = gatewayFailureDetails(probe.err)
 				if hasOtherUsable {
 					details = append(details, "another configuration context is valid")
 				}
@@ -521,6 +522,46 @@ func missingCredentialDetails(evaluation contextEvaluation) []string {
 		details = append(details, core.VarAnthropicBaseURL+": <unset>")
 	}
 	return details
+}
+
+func gatewayFailureDetails(err error) []string {
+	details := []string{"reason: " + err.Error()}
+	var gatewayErr *gateway.Error
+	if !errors.As(err, &gatewayErr) {
+		return details
+	}
+	if gatewayErr.URL != "" {
+		details = append(details, "request URL: "+gatewayErr.URL)
+	}
+	if gatewayErr.Kind != "" {
+		details = append(details, "failure kind: "+string(gatewayErr.Kind))
+	}
+	if gatewayErr.StatusCode != 0 {
+		details = append(details, fmt.Sprintf("HTTP status: %d", gatewayErr.StatusCode))
+	}
+	if meaning := gatewayFailureMeaning(gatewayErr); meaning != "" {
+		details = append(details, "what it means: "+meaning)
+	}
+	return details
+}
+
+func gatewayFailureMeaning(err *gateway.Error) string {
+	switch err.Kind {
+	case gateway.FailureAuth:
+		return "the gateway rejected the configured token; check ANTHROPIC_AUTH_TOKEN for this source"
+	case gateway.FailureNetwork:
+		return "llmgate could not reach the gateway; check the base URL, DNS, VPN/proxy, TLS, and network access"
+	case gateway.FailureHTTP:
+		return "the gateway returned a non-success HTTP response; inspect the gateway/upstream logs and base URL"
+	case gateway.FailureInvalidJSON:
+		return "the gateway response was not OpenAI-compatible JSON"
+	case gateway.FailureEmptyModels:
+		return "the gateway returned no usable model IDs"
+	case gateway.FailureInvalidURL:
+		return "the configured base URL is malformed; use an http(s) LiteLLM gateway root or /v1 URL"
+	default:
+		return ""
+	}
 }
 
 func resolvedDisplay(value core.ResolvedValue) string {

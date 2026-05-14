@@ -2,6 +2,7 @@ package wizard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -163,7 +164,7 @@ func safeBaseURLDefault(raw string, knownSecrets []string, display displayOption
 func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, token string, display displayOptions) (gatewayRecovery, error) {
 	value, promptErr := prompts.Select(ctx, SelectPrompt{
 		Title:       "Gateway validation failed",
-		Description: sanitizeText(err.Error(), []string{token}, display),
+		Description: sanitizeText(gatewayFailureDescription(err), []string{token}, display),
 		Options: []Option{
 			{Label: "Edit token/base URL", Value: string(gatewayRecoveryEdit)},
 			{Label: "Retry", Value: string(gatewayRecoveryRetry)},
@@ -172,6 +173,43 @@ func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, tok
 		Default: string(gatewayRecoveryEdit),
 	})
 	return gatewayRecovery(value), promptErr
+}
+
+func gatewayFailureDescription(err error) string {
+	lines := []string{err.Error()}
+	var gatewayErr *gateway.Error
+	if !errors.As(err, &gatewayErr) {
+		return strings.Join(lines, "\n")
+	}
+	if gatewayErr.URL != "" {
+		lines = append(lines, "Request URL: "+gatewayErr.URL)
+	}
+	if gatewayErr.Kind != "" {
+		lines = append(lines, "Failure kind: "+string(gatewayErr.Kind))
+	}
+	if meaning := gatewayRecoveryMeaning(gatewayErr.Kind); meaning != "" {
+		lines = append(lines, "Meaning: "+meaning)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func gatewayRecoveryMeaning(kind gateway.FailureKind) string {
+	switch kind {
+	case gateway.FailureAuth:
+		return "the gateway rejected the token"
+	case gateway.FailureNetwork:
+		return "llmgate could not reach the gateway"
+	case gateway.FailureHTTP:
+		return "the gateway returned a non-success HTTP response"
+	case gateway.FailureInvalidJSON:
+		return "the gateway response was not OpenAI-compatible JSON"
+	case gateway.FailureEmptyModels:
+		return "the gateway returned no usable model IDs"
+	case gateway.FailureInvalidURL:
+		return "the base URL is malformed"
+	default:
+		return ""
+	}
 }
 
 func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendation gateway.Recommendation, token string, display displayOptions) (bool, error) {

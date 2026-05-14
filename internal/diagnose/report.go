@@ -13,6 +13,7 @@ type RenderOptions struct {
 	KnownSecrets []string
 	HomeDir      string
 	GOOS         string
+	Color        bool
 }
 
 func Render(result Result, opts RenderOptions) string {
@@ -25,7 +26,7 @@ func Render(result Result, opts RenderOptions) string {
 	opts.KnownSecrets = append(opts.KnownSecrets, KnownSecrets(result)...)
 
 	var builder strings.Builder
-	_, _ = fmt.Fprintf(&builder, "llmgate diagnosis: %s\n", result.Status())
+	_, _ = fmt.Fprintf(&builder, "llmgate diagnosis: %s\n", renderStatus(result.Status(), opts.Color))
 	for i, section := range result.Sections {
 		if i == 0 {
 			builder.WriteByte('\n')
@@ -42,7 +43,7 @@ func Render(result Result, opts RenderOptions) string {
 			if summary == "" {
 				summary = check.Title
 			}
-			_, _ = fmt.Fprintf(&builder, "- %s: %s\n", check.Status, summary)
+			_, _ = fmt.Fprintf(&builder, "- %s: %s\n", renderStatus(check.Status, opts.Color), summary)
 			for _, detail := range check.Details {
 				if detail == "" {
 					continue
@@ -58,6 +59,29 @@ func Render(result Result, opts RenderOptions) string {
 		HomeDir:      opts.HomeDir,
 		GOOS:         opts.GOOS,
 	})
+}
+
+func renderStatus(status core.DiagnosticStatus, color bool) string {
+	text := status.String()
+	if !color {
+		return text
+	}
+	switch status {
+	case core.StatusOK:
+		return ansi("32", text)
+	case core.StatusSKIP:
+		return ansi("36", text)
+	case core.StatusWARN:
+		return ansi("33", text)
+	case core.StatusFAIL:
+		return ansi("31", text)
+	default:
+		return text
+	}
+}
+
+func ansi(code, text string) string {
+	return "\x1b[" + code + "m" + text + "\x1b[0m"
 }
 
 // KnownSecrets returns secret values discovered in the diagnostic input.

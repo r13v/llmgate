@@ -187,6 +187,7 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 				Status:  core.StatusWARN,
 				Title:   "Probe",
 				Summary: `probe failed for model "claude-` + token + `" at /home/ada/.claude/settings.json`,
+				Details: []string{`reason: model probe failed for sk-` + token + ` in /home/ada/.claude/settings.json`},
 			}},
 		}},
 	}
@@ -197,6 +198,8 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	assertNotContains(t, rendered, token)
 	assertNotContains(t, rendered, "/home/ada")
 	assertContains(t, rendered, "~/")
+	assertContains(t, rendered, "[Model Probes / Probe]")
+	assertContains(t, rendered, "reason: model probe failed")
 }
 
 func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {

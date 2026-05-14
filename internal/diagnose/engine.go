@@ -376,7 +376,7 @@ func validateSideContext(ctx context.Context, side sideValidationContext, opts O
 			Title:   side.name,
 			Status:  core.StatusWARN,
 			Summary: fmt.Sprintf("%s gateway validation failed", label),
-			Details: []string{err.Error()},
+			Details: gatewayFailureDetails(err),
 		}}
 	}
 

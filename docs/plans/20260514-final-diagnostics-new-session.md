@@ -144,14 +144,14 @@
 **Files:**
 - Modify: `docs/plans/20260514-final-diagnostics-new-session.md`
 
-- [ ] Verify final diagnostics after setup validate reread persisted sources, not prompt/apply-plan values.
-- [ ] Verify initial diagnostics still use current process environment.
-- [ ] Verify old process env drift never changes final `OK/WARN/FAIL`.
-- [ ] Verify real future-session warnings still affect final status.
-- [ ] Verify repair final diagnostics retain their existing current-process behavior.
-- [ ] Verify no secrets leak in the new note, diagnostics, tests, or failures.
-- [ ] Run full default suite: `make test`.
-- [ ] Run e2e suite: `make test-e2e`.
+- [x] Verify final diagnostics after setup validate reread persisted sources, not prompt/apply-plan values.
+- [x] Verify initial diagnostics still use current process environment.
+- [x] Verify old process env drift never changes final `OK/WARN/FAIL`.
+- [x] Verify real future-session warnings still affect final status.
+- [x] Verify repair final diagnostics retain their existing current-process behavior.
+- [x] Verify no secrets leak in the new note, diagnostics, tests, or failures.
+- [x] Run full default suite: `make test`.
+- [x] Run e2e suite: `make test-e2e`.
 
 ### Task 6: Final Documentation
 **Files:**

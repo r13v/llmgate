@@ -15,13 +15,16 @@ import (
 const defaultCommandTimeout = 5 * time.Second
 
 type Options struct {
-	NetworkChecks  bool
-	Gateway        gateway.Client
-	CommandTimeout time.Duration
+	NetworkChecks            bool
+	Gateway                  gateway.Client
+	CommandTimeout           time.Duration
+	CurrentMode              config.CurrentMode
+	BypassFailedGatewayCache bool
 }
 
 type Result struct {
 	Sections                          []core.DiagnosticSection
+	Findings                          []core.DiagnosticFinding
 	Read                              config.ReadResult
 	Resolution                        config.Resolution
 	RepairableStaleShellModelWarnings []RepairableStaleShellModelWarning
@@ -36,9 +39,9 @@ type RepairableStaleShellModelWarning struct {
 }
 
 func Run(ctx context.Context, sys system.System, read config.ReadResult, opts Options) (Result, error) {
-	resolution := config.Resolve(read)
+	resolution := config.ResolveWithOptions(read, config.ResolveOptions{CurrentMode: opts.CurrentMode})
 	evaluations := evaluateGlobalContexts(ctx, resolution, opts)
-	multipleContexts := len(evaluations) > 1
+	labelContexts := len(evaluations) > 1 || opts.CurrentMode == config.CurrentModeNewSession
 
 	result := Result{
 		Read:       read,
@@ -49,33 +52,39 @@ func Run(ctx context.Context, sys system.System, read config.ReadResult, opts Op
 	if section, ok := buildConflictSection(resolution.Conflicts); ok {
 		result.Sections = append(result.Sections, section)
 	}
-	result.Sections = append(result.Sections, buildRuntimeSection(resolution.Runtime))
+	if section, ok := buildRuntimeSection(resolution); ok {
+		result.Sections = append(result.Sections, section)
+	}
 	if section, ok := buildSourceIssueSection(resolution.SourceIssues); ok {
 		result.Sections = append(result.Sections, section)
 	}
 	result.Sections = append(result.Sections, buildProjectOverrideSection(resolution.ProjectOverrides))
 
+	var sideGatewayFailures []sideGatewayFailure
 	for _, evaluation := range evaluations {
-		result.Sections = append(result.Sections, buildGatewaySection(evaluation, multipleContexts, hasOtherUsable(evaluations, evaluation.name)))
+		result.Sections = append(result.Sections, buildGatewaySection(evaluation, labelContexts, hasOtherUsable(evaluations, evaluation.name)))
 	}
 	for _, evaluation := range evaluations {
-		section, repairable := buildModelsSection(evaluation, multipleContexts, hasOtherUsable(evaluations, evaluation.name), resolution.Current)
+		section, repairable := buildModelsSection(evaluation, labelContexts, hasOtherUsable(evaluations, evaluation.name), resolution.Current)
 		result.Sections = append(result.Sections, section)
 		result.RepairableStaleShellModelWarnings = append(result.RepairableStaleShellModelWarnings, repairable...)
 	}
 	for _, evaluation := range evaluations {
-		result.Sections = append(result.Sections, buildProbesSection(evaluation, multipleContexts, hasOtherUsable(evaluations, evaluation.name)))
+		result.Sections = append(result.Sections, buildProbesSection(evaluation, labelContexts, hasOtherUsable(evaluations, evaluation.name)))
 	}
-	if section, ok := buildIDEConfigSection(read, resolution.IDEDrift); ok {
+	if section, ok := buildIDEConfigSection(read, resolution.Current.Name, resolution.IDEDrift); ok {
 		result.Sections = append(result.Sections, section)
 	}
-	if section, ok := buildProjectConfigValidationSection(ctx, read, resolution, opts); ok {
+	if section, failures, ok := buildProjectConfigValidationSection(ctx, read, resolution, opts); ok {
 		result.Sections = append(result.Sections, section)
+		sideGatewayFailures = append(sideGatewayFailures, failures...)
 	}
-	if section, ok := buildIDEConfigValidationSection(ctx, read, resolution, opts); ok {
+	if section, failures, ok := buildIDEConfigValidationSection(ctx, read, resolution, opts); ok {
 		result.Sections = append(result.Sections, section)
+		sideGatewayFailures = append(sideGatewayFailures, failures...)
 	}
 	result.Sections = append(result.Sections, buildWriteTargetsSection(read.WriteTargets))
+	result.Findings = buildDiagnosticFindings(resolution, evaluations, sideGatewayFailures, labelContexts)
 
 	return result, nil
 }
@@ -125,10 +134,10 @@ func buildClaudeCLISection(ctx context.Context, sys system.System, opts Options)
 
 func evaluateGlobalContexts(ctx context.Context, resolution config.Resolution, opts Options) []contextEvaluation {
 	contexts := []contextEvaluation{
-		evaluateContext(ctx, contextCurrent, resolution.Current, opts),
+		evaluateContext(ctx, resolution.Current.Name, resolution.Current, opts),
 	}
 	if contextsDiffer(resolution.Current, resolution.Persisted) {
-		contexts = append(contexts, evaluateContext(ctx, contextPersisted, resolution.Persisted, opts))
+		contexts = append(contexts, evaluateContext(ctx, resolution.Persisted.Name, resolution.Persisted, opts))
 	}
 	return contexts
 }
@@ -154,7 +163,8 @@ func evaluateContext(ctx context.Context, name string, resolved core.ResolvedCon
 		return evaluation
 	}
 
-	modelList, err := opts.Gateway.ListModels(ctx, evaluation.baseURL, evaluation.token, gateway.RequestOptions{})
+	requestOptions := gatewayRequestOptions(opts)
+	modelList, err := opts.Gateway.ListModels(ctx, evaluation.baseURL, evaluation.token, requestOptions)
 	if err != nil {
 		evaluation.gatewayErr = err
 		return evaluation
@@ -173,7 +183,7 @@ func evaluateContext(ctx context.Context, name string, resolved core.ResolvedCon
 	}
 
 	for _, model := range uniqueAvailableModels(evaluation.models) {
-		result, probeErr := opts.Gateway.ProbeModel(ctx, evaluation.baseURL, evaluation.token, model, gateway.RequestOptions{})
+		result, probeErr := opts.Gateway.ProbeModel(ctx, evaluation.baseURL, evaluation.token, model, requestOptions)
 		evaluation.probes = append(evaluation.probes, probeEvaluation{
 			model:  model,
 			result: result,
@@ -260,54 +270,64 @@ func repairableStaleShellModel(model modelEvaluation, current core.ResolvedConfi
 		StaleValue:   model.value,
 		CurrentValue: currentValue,
 		Source:       model.value.Source,
-		Summary:      fmt.Sprintf("%s in %s is unavailable and differs from the current environment", model.name, model.value.Source.Path),
+		Summary:      fmt.Sprintf("%s in %s is unavailable and differs from the %s", model.name, model.value.Source.Path, current.Name),
 	}, true
 }
 
-func buildProjectConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, bool) {
+func buildProjectConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, []sideGatewayFailure, bool) {
 	if !opts.NetworkChecks {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	sources := orderedSideSources(read.Sources, core.SourceProjectLocalSettings, core.SourceProjectSettings)
 	if len(sources) == 0 {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	checks := make([]core.DiagnosticCheck, 0)
+	var failures []sideGatewayFailure
 	for _, source := range sources {
 		side := sideContextFromSource(source, resolution.Current)
-		checks = append(checks, validateSideContext(ctx, side, opts, "project")...)
+		validation := validateSideContext(ctx, side, opts, "project")
+		checks = append(checks, validation.Checks...)
+		if validation.GatewayFailure != nil {
+			failures = append(failures, *validation.GatewayFailure)
+		}
 	}
 
 	return core.DiagnosticSection{
 		ID:     sectionProjectConfigValidation,
 		Title:  "Project Config Validation",
 		Checks: checks,
-	}, true
+	}, failures, true
 }
 
-func buildIDEConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, bool) {
+func buildIDEConfigValidationSection(ctx context.Context, read config.ReadResult, resolution config.Resolution, opts Options) (core.DiagnosticSection, []sideGatewayFailure, bool) {
 	if !opts.NetworkChecks {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	sources := orderedSideSources(read.Sources, core.SourceVSCodeSettings, core.SourceCursorSettings)
 	if len(sources) == 0 {
-		return core.DiagnosticSection{}, false
+		return core.DiagnosticSection{}, nil, false
 	}
 
 	checks := make([]core.DiagnosticCheck, 0)
+	var failures []sideGatewayFailure
 	for _, source := range sources {
 		side := sideContextFromSource(source, resolution.Current)
-		checks = append(checks, validateSideContext(ctx, side, opts, "IDE")...)
+		validation := validateSideContext(ctx, side, opts, "IDE")
+		checks = append(checks, validation.Checks...)
+		if validation.GatewayFailure != nil {
+			failures = append(failures, *validation.GatewayFailure)
+		}
 	}
 
 	return core.DiagnosticSection{
 		ID:     sectionIDEConfigValidation,
 		Title:  "IDE Config Validation",
 		Checks: checks,
-	}, true
+	}, failures, true
 }
 
 func sideContextFromSource(source config.Source, global core.ResolvedConfig) sideValidationContext {
@@ -351,33 +371,41 @@ func sideContextFromSource(source config.Source, global core.ResolvedConfig) sid
 	return sideValidationContext{
 		name:    source.Label.String(),
 		source:  source.Label,
-		values:  values,
 		models:  models,
 		token:   token.Value,
 		baseURL: baseURL.Value,
 	}
 }
 
-func validateSideContext(ctx context.Context, side sideValidationContext, opts Options, label string) []core.DiagnosticCheck {
+func validateSideContext(ctx context.Context, side sideValidationContext, opts Options, label string) sideValidationResult {
 	if side.token == "" || side.baseURL == "" {
-		return []core.DiagnosticCheck{{
+		return sideValidationResult{Checks: []core.DiagnosticCheck{{
 			ID:      sideCheckID(label, side.source, "credentials"),
 			Title:   side.name,
 			Status:  core.StatusWARN,
 			Summary: fmt.Sprintf("%s gateway credentials are insufficient for validation", label),
 			Details: sideCredentialDetails(side),
-		}}
+		}}}
 	}
 
-	modelList, err := opts.Gateway.ListModels(ctx, side.baseURL, side.token, gateway.RequestOptions{})
+	modelList, err := opts.Gateway.ListModels(ctx, side.baseURL, side.token, gatewayRequestOptions(opts))
 	if err != nil {
-		return []core.DiagnosticCheck{{
-			ID:      sideCheckID(label, side.source, "gateway"),
-			Title:   side.name,
-			Status:  core.StatusWARN,
-			Summary: fmt.Sprintf("%s gateway validation failed", label),
-			Details: []string{err.Error()},
-		}}
+		checkID := sideCheckID(label, side.source, "gateway")
+		return sideValidationResult{
+			Checks: []core.DiagnosticCheck{{
+				ID:      checkID,
+				Title:   side.name,
+				Status:  core.StatusWARN,
+				Summary: fmt.Sprintf("%s gateway validation failed", label),
+				Details: gatewayFailureDetails(err),
+			}},
+			GatewayFailure: &sideGatewayFailure{
+				Source:  side.source,
+				Name:    side.name,
+				Err:     err,
+				CheckID: checkID,
+			},
+		}
 	}
 
 	checks := []core.DiagnosticCheck{{
@@ -396,7 +424,7 @@ func validateSideContext(ctx context.Context, side sideValidationContext, opts O
 			Status:  core.StatusOK,
 			Summary: fmt.Sprintf("%s has no model override to validate", label),
 		})
-		return checks
+		return sideValidationResult{Checks: checks}
 	}
 	for _, model := range side.models {
 		status := core.StatusOK
@@ -413,7 +441,7 @@ func validateSideContext(ctx context.Context, side sideValidationContext, opts O
 			Details: []string{"model: " + displayValue(model.Value, model.Secret), "source: " + model.Source.String()},
 		})
 	}
-	return checks
+	return sideValidationResult{Checks: checks}
 }
 
 func sideCredentialDetails(side sideValidationContext) []string {
@@ -458,4 +486,10 @@ func isModelVariable(name string) bool {
 		}
 	}
 	return false
+}
+
+func gatewayRequestOptions(opts Options) gateway.RequestOptions {
+	return gateway.RequestOptions{
+		BypassFailedCache: opts.BypassFailedGatewayCache,
+	}
 }

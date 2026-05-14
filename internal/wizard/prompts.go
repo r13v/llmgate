@@ -163,7 +163,7 @@ func safeBaseURLDefault(raw string, knownSecrets []string, display displayOption
 func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, token string, display displayOptions) (gatewayRecovery, error) {
 	value, promptErr := prompts.Select(ctx, SelectPrompt{
 		Title:       "Gateway validation failed",
-		Description: sanitizeText(err.Error(), []string{token}, display),
+		Description: gatewayFailureDescription(err, []string{token}, display),
 		Options: []Option{
 			{Label: "Edit token/base URL", Value: string(gatewayRecoveryEdit)},
 			{Label: "Retry", Value: string(gatewayRecoveryRetry)},
@@ -172,6 +172,35 @@ func promptGatewayRecovery(ctx context.Context, prompts Prompter, err error, tok
 		Default: string(gatewayRecoveryEdit),
 	})
 	return gatewayRecovery(value), promptErr
+}
+
+func gatewayFailureDescription(err error, knownSecrets []string, display displayOptions) string {
+	explanation := gateway.ExplainFailure(err)
+	var lines []string
+	if explanation.Cause != "" {
+		lines = appendGatewayDescriptionLine(lines, "Cause: "+explanation.Cause, knownSecrets, display)
+	}
+	for _, evidence := range explanation.Evidence {
+		if evidence == "" {
+			continue
+		}
+		lines = appendGatewayDescriptionLine(lines, "Evidence: "+evidence, knownSecrets, display)
+	}
+	if explanation.Remediation != "" {
+		lines = appendGatewayDescriptionLine(lines, "Fix: "+explanation.Remediation, knownSecrets, display)
+	}
+	if len(lines) == 0 && err != nil {
+		lines = appendGatewayDescriptionLine(lines, err.Error(), knownSecrets, display)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func appendGatewayDescriptionLine(lines []string, line string, knownSecrets []string, display displayOptions) []string {
+	line = sanitizeSummaryLine(line, knownSecrets, display)
+	if line == "" {
+		return lines
+	}
+	return append(lines, line)
 }
 
 func promptUseRecommendation(ctx context.Context, prompts Prompter, recommendation gateway.Recommendation, token string, display displayOptions) (bool, error) {

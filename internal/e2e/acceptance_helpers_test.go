@@ -71,6 +71,7 @@ func (g *fakeGateway) resetCounts() {
 	g.fallbackCalls = 0
 	g.probeCalls = 0
 	g.paths = nil
+	g.listTokens = nil
 	g.probedModels = nil
 	g.probePingBodies = 0
 }
@@ -111,4 +112,14 @@ func sortedCopy(values []string) []string {
 	copied := append([]string(nil), values...)
 	sort.Strings(copied)
 	return copied
+}
+
+func countString(values []string, want string) int {
+	count := 0
+	for _, value := range values {
+		if value == want {
+			count++
+		}
+	}
+	return count
 }

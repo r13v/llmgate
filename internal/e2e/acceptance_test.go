@@ -186,6 +186,28 @@ func TestAcceptanceGatewayAndModelSelectionScenarios(t *testing.T) {
 		assertFileNotContains(t, edit.fs, "/home/ada/.claude/settings.json", "sk-bad-token-1234567890")
 	})
 
+	t.Run("finding summary keeps uncovered model warning visible", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.claude/settings.json", fullClaudeSettingsWithModel(h.gateway.url(), missingModel), 0o600)
+		h.fs.addFile("/home/ada/.zshrc", []byte("export ANTHROPIC_AUTH_TOKEN='"+altTestToken+"'\n"), 0o600)
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "exit"},
+		})
+		if err != nil {
+			t.Fatalf("Run() error = %v\n%s", err, output)
+		}
+
+		assertContains(t, output, "WARN Config: ANTHROPIC_AUTH_TOKEN differs across sources")
+		assertContains(t, output, "ANTHROPIC_MODEL model is unavailable")
+		assertContains(t, output, "Primary Claude Code model")
+		assertNotContains(t, output, "[Config Source Conflicts / ANTHROPIC_AUTH_TOKEN]")
+		if h.fs.mutationOps() != 0 {
+			t.Fatalf("diagnostic exit wrote filesystem %d time(s)\n%s", h.fs.mutationOps(), output)
+		}
+	})
+
 	t.Run("manual advanced models unavailable and probe failure block writes", func(t *testing.T) {
 		manual := newHarness(t)
 		output, err := manual.runScripted([]promptResponse{
@@ -454,6 +476,37 @@ func TestAcceptanceWindowsIDEScenarios(t *testing.T) {
 		}
 	})
 
+	t.Run("Windows setup final diagnostics use reread user environment", func(t *testing.T) {
+		h := newHarness(t, withPlatform("windows", `C:\Users\Ada`, `C:\Users\Ada\project`))
+		h.env.values["APPDATA"] = `C:\Users\Ada\AppData\Roaming`
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("Windows setup error = %v\n%s", err, output)
+		}
+
+		if h.winEnv.values[core.VarAnthropicAuthToken] != testToken {
+			t.Fatalf("Windows user env token = %q, want setup token", h.winEnv.values[core.VarAnthropicAuthToken])
+		}
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertContains(t, final, "Configured")
+		assertContains(t, final, "Current terminal note:")
+		assertNotContains(t, final, "current environment")
+		assertNoSecretLeak(t, output, altTestToken, testToken)
+	})
+
 	t.Run("IDE targets require directories and preserve settings", func(t *testing.T) {
 		noIDE := newHarness(t)
 		output, err := noIDE.runScripted([]promptResponse{
@@ -611,6 +664,156 @@ func TestAcceptanceProjectRepairAndFinalDiagnosticsScenarios(t *testing.T) {
 	})
 }
 
+func TestAcceptanceSetupFinalDiagnosticsNewSessionScenarios(t *testing.T) {
+	t.Run("stale process env and updated shell produce OK final diagnostics", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.zshrc", shellExports(altTestToken, h.gateway.url(), staleModel), 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect", values: []string{"0", "1"}},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("setup error = %v\n%s", err, output)
+		}
+
+		assertFileContains(t, h.fs, "/home/ada/.zshrc", "export ANTHROPIC_AUTH_TOKEN='"+testToken+"'")
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertContains(t, final, "Configured")
+		assertContains(t, final, "Current terminal note:")
+		assertNotContains(t, final, "current environment")
+		note := currentTerminalNoteLine(output)
+		assertContains(t, note, "Current terminal note:")
+		assertNotContains(t, note, altTestToken)
+		assertNotContains(t, note, testToken)
+		assertNoSecretLeak(t, output, altTestToken, testToken)
+	})
+
+	t.Run("updating IDE targets removes drift against new session config", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addFile("/home/ada/.zshrc", shellExports(altTestToken, h.gateway.url(), staleModel), 0o600)
+		h.fs.addDir("/home/ada/.config/Code/User")
+		h.fs.addDir("/home/ada/.config/Cursor/User")
+		staleIDE := ideSettings(staleModel, map[string]string{
+			core.VarAnthropicAuthToken: altTestToken,
+			core.VarAnthropicBaseURL:   h.gateway.url(),
+			core.VarAnthropicModel:     staleModel,
+		})
+		h.fs.addFile("/home/ada/.config/Code/User/settings.json", staleIDE, 0o600)
+		h.fs.addFile("/home/ada/.config/Cursor/User/settings.json", staleIDE, 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+		h.env.values[core.VarAnthropicModel] = staleModel
+
+		output, err := h.runScripted([]promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect"},
+			{kind: "confirm", confirm: true},
+		})
+		if err != nil {
+			t.Fatalf("IDE update setup error = %v\n%s", err, output)
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: OK")
+		assertNotContains(t, final, "WARN IDE")
+		assertNotContains(t, final, "IDE: ANTHROPIC_AUTH_TOKEN differs from new terminal session")
+		assertFileContains(t, h.fs, "/home/ada/.config/Code/User/settings.json", testToken)
+		assertFileContains(t, h.fs, "/home/ada/.config/Cursor/User/settings.json", sonnetModel)
+	})
+
+	t.Run("stale IDE targets remain WARN and bypass cached side-context failure", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.addDir("/home/ada/.config/Code/User")
+		h.fs.addFile("/home/ada/.config/Code/User/settings.json", ideSettings(staleModel, map[string]string{
+			core.VarAnthropicModel: staleModel,
+		}), 0o600)
+		h.env.values[core.VarAnthropicAuthToken] = altTestToken
+
+		client := h.gateway.client()
+		cachedStaleFailure := false
+		h.fs.afterMove = func(finalPath string) {
+			if cachedStaleFailure || finalPath != "/home/ada/.zshrc" {
+				return
+			}
+			cachedStaleFailure = true
+			h.fs.files["/home/ada/.config/Code/User/settings.json"] = ideSettings(staleModel, map[string]string{
+				core.VarAnthropicAuthToken: altTestToken,
+				core.VarAnthropicBaseURL:   h.gateway.url(),
+				core.VarAnthropicModel:     staleModel,
+			})
+			h.gateway.queueListResponses(gatewayResponse{
+				status: http.StatusBadGateway,
+				body:   `{"detail":"old cached gateway failure"}`,
+			})
+			if _, err := client.ListModels(context.Background(), h.gateway.url(), altTestToken, gateway.RequestOptions{}); err == nil {
+				t.Fatal("pre-cache IDE ListModels() error = nil, want failure")
+			}
+		}
+
+		output, err := h.runWithPrompterAndGateway(&scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+			{kind: "select", value: "setup"},
+			{kind: "confirm", confirm: false},
+			{kind: "input", value: testToken},
+			{kind: "input", value: h.gateway.url()},
+			{kind: "confirm", confirm: true},
+			{kind: "multiselect", values: []string{"0", "1"}},
+			{kind: "confirm", confirm: true},
+		}}, client)
+		if err != nil {
+			t.Fatalf("stale IDE setup error = %v\n%s", err, output)
+		}
+		if !cachedStaleFailure {
+			t.Fatal("test did not cache stale IDE gateway failure")
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: WARN")
+		assertContains(t, final, "Configured with warnings")
+		assertContains(t, final, "differs from new terminal session")
+		assertNotContains(t, output, "old cached gateway failure")
+		h.gateway.mu.Lock()
+		staleIDERequests := countString(h.gateway.listTokens, altTestToken)
+		h.gateway.mu.Unlock()
+		if staleIDERequests < 2 {
+			t.Fatalf("stale IDE token list requests = %d, want pre-cache plus final bypass request", staleIDERequests)
+		}
+	})
+
+	t.Run("final gateway failure is labeled as new terminal session", func(t *testing.T) {
+		h := newHarness(t)
+		h.fs.afterMove = func(finalPath string) {
+			if finalPath == "/home/ada/.zshrc" {
+				h.fs.files[finalPath] = shellExports(testToken, "://bad", sonnetModel)
+			}
+		}
+
+		output, err := h.runScripted(freshSetupResponses(h.gateway.url(), nil))
+		if !errors.Is(err, wizard.ErrSetupIncomplete) {
+			t.Fatalf("setup error = %v, want ErrSetupIncomplete\n%s", err, output)
+		}
+
+		final := finalDiagnosticsOutput(output)
+		assertContains(t, final, "Final diagnostics: FAIL")
+		assertContains(t, final, "*Gateway (new terminal session)*")
+		assertNotContains(t, final, "*Gateway (current environment)*")
+	})
+}
+
 func freshSetupResponses(baseURL string, targets []string) []promptResponse {
 	return []promptResponse{
 		{kind: "confirm", confirm: true},
@@ -682,4 +885,33 @@ func ideSettings(selectedModel string, values map[string]string) []byte {
 		panic(err)
 	}
 	return append(data, '\n')
+}
+
+func shellExports(token, baseURL, model string) []byte {
+	return []byte(strings.Join([]string{
+		"export ANTHROPIC_AUTH_TOKEN='" + token + "'",
+		"export ANTHROPIC_BASE_URL='" + baseURL + "'",
+		"export ANTHROPIC_MODEL='" + model + "'",
+		"export ANTHROPIC_DEFAULT_HAIKU_MODEL='" + haikuModel + "'",
+		"export ANTHROPIC_DEFAULT_SONNET_MODEL='" + sonnetModel + "'",
+		"export ANTHROPIC_DEFAULT_OPUS_MODEL='" + opusModel + "'",
+		"",
+	}, "\n"))
+}
+
+func finalDiagnosticsOutput(output string) string {
+	index := strings.LastIndex(output, "Final diagnostics:")
+	if index < 0 {
+		return ""
+	}
+	return output[index:]
+}
+
+func currentTerminalNoteLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Current terminal note:") {
+			return line
+		}
+	}
+	return ""
 }

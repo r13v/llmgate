@@ -8,11 +8,15 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/xpty"
+	"github.com/r13v/llmgate/internal/apply"
 	"github.com/r13v/llmgate/internal/config"
 	"github.com/r13v/llmgate/internal/core"
 	"github.com/r13v/llmgate/internal/diagnose"
@@ -40,6 +44,33 @@ func TestAccessibleStartupDeclinePerformsNoReads(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "No files were read or changed.") {
 		t.Fatalf("decline output missing no-read message:\n%s", output.String())
+	}
+}
+
+func TestTTYStartupDeclinePerformsNoEnvironmentReads(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix PTY smoke test is skipped on Windows")
+	}
+	pty, err := xpty.NewUnixPty(80, 24)
+	if err != nil {
+		t.Skipf("pty unavailable: %v", err)
+	}
+	defer func() {
+		_ = pty.Close()
+	}()
+
+	sys := testSystem(panicFileSystem{}, nil)
+	sys.Env = panicEnvironment{}
+	sys.Terminal = testTerminal{interactive: true}
+
+	err = Run(context.Background(), Options{
+		System:   sys,
+		Prompter: &scriptedPrompter{responses: []promptResponse{{kind: "confirm", confirm: false}}},
+		Output:   pty.Slave(),
+	})
+
+	if !errors.Is(err, ErrStartupDeclined) {
+		t.Fatalf("Run() error = %v, want ErrStartupDeclined", err)
 	}
 }
 
@@ -83,6 +114,180 @@ func TestAccessibleFreshSetupWritesSelectedTargetsAndRedactsToken(t *testing.T) 
 	}
 	assertContains(t, rendered, "Configured")
 	assertContains(t, rendered, "Restart your terminal and IDE")
+}
+
+func TestSetupFinalDiagnosticsUseNewSessionAndPrintCurrentTerminalNote(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	fileSystem := newWizardFileSystem()
+	var output bytes.Buffer
+	staleToken := "sk-oldtoken1234567890"
+	newValues := standardSetupValues(server.URL)
+	prompts := &scriptedPrompter{responses: []promptResponse{
+		{kind: "confirm", confirm: true},
+		{kind: "select", value: string(actionSetup)},
+		{kind: "confirm", confirm: false},
+		{kind: "input", value: newValues.AuthToken},
+		{kind: "input", value: newValues.BaseURL},
+		{kind: "confirm", confirm: true},
+		{kind: "multiselect", values: []string{"0", "1"}},
+		{kind: "confirm", confirm: true},
+	}}
+
+	err := Run(context.Background(), Options{
+		System: testSystem(fileSystem, map[string]string{
+			"SHELL":                    "/bin/zsh",
+			core.VarAnthropicAuthToken: staleToken,
+			core.VarAnthropicBaseURL:   server.URL,
+			core.VarAnthropicModel:     "claude-stale",
+		}),
+		Gateway:  testGateway(server),
+		Prompter: prompts,
+		Output:   &output,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: OK")
+	assertContains(t, rendered, "Configured")
+	assertContains(t, rendered, "Restart your terminal and IDE")
+	assertNotContains(t, rendered, "Setup incomplete")
+
+	note := currentTerminalNoteLine(rendered)
+	assertContains(t, note, "Current terminal note:")
+	assertNotContains(t, note, staleToken)
+	assertNotContains(t, note, newValues.AuthToken)
+}
+
+func TestSetupCurrentTerminalNoteOmittedWhenProcessEnvMatchesNewSession(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	fileSystem := newWizardFileSystem()
+	var output bytes.Buffer
+	values := standardSetupValues(server.URL)
+	prompts := &scriptedPrompter{responses: []promptResponse{
+		{kind: "confirm", confirm: true},
+		{kind: "select", value: string(actionSetup)},
+		{kind: "confirm", confirm: true},
+		{kind: "input", value: values.BaseURL},
+		{kind: "confirm", confirm: true},
+		{kind: "multiselect", values: []string{"0", "1"}},
+		{kind: "confirm", confirm: true},
+	}}
+
+	err := Run(context.Background(), Options{
+		System:   testSystem(fileSystem, standardSetupEnv(values)),
+		Gateway:  testGateway(server),
+		Prompter: prompts,
+		Output:   &output,
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: OK")
+	assertContains(t, rendered, "Configured")
+	assertNotContains(t, rendered, "Current terminal note")
+}
+
+func TestSetupFinalDiagnosticsBypassCachedGatewayFailure(t *testing.T) {
+	var failModels atomic.Bool
+	var modelRequests atomic.Int64
+	failModels.Store(true)
+
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.URL.Path != "/v1/models" {
+			return false
+		}
+		modelRequests.Add(1)
+		if !failModels.Load() {
+			return false
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"detail":"temporary failure"}`))
+		return true
+	})
+	defer server.Close()
+
+	values := standardSetupValues(server.URL)
+	client := testGateway(server)
+	if _, err := client.ListModels(context.Background(), values.BaseURL, values.AuthToken, gateway.RequestOptions{}); err == nil {
+		t.Fatal("pre-cache ListModels() error = nil, want failure")
+	}
+	failModels.Store(false)
+
+	fileSystem := newWizardFileSystem()
+	sys := testSystem(fileSystem, map[string]string{"SHELL": "/bin/zsh"})
+	paths, err := sys.DetectPaths()
+	if err != nil {
+		t.Fatalf("DetectPaths() error = %v", err)
+	}
+	plan, err := apply.BuildSetupPlan(sys, paths, paths.WriteTargets[:2], values)
+	if err != nil {
+		t.Fatalf("BuildSetupPlan() error = %v", err)
+	}
+
+	var output bytes.Buffer
+	runner := newRunner(Options{
+		System:  sys,
+		Gateway: client,
+		Output:  &output,
+	})
+	if err := runner.applyPlanAndFinalize(context.Background(), plan, []string{values.AuthToken}, setupFinalDiagnosticOptions(), true); err != nil {
+		t.Fatalf("applyPlanAndFinalize() error = %v\n%s", err, output.String())
+	}
+
+	assertContains(t, output.String(), "Final diagnostics: OK")
+	if got := modelRequests.Load(); got != 2 {
+		t.Fatalf("model list requests = %d, want 2 to prove failed cache bypass", got)
+	}
+}
+
+func TestRepairFinalDiagnosticsKeepCurrentProcessMode(t *testing.T) {
+	server := newWizardGateway(t, []string{"claude-haiku-4", "claude-sonnet-4", "claude-opus-4"}, nil)
+	defer server.Close()
+
+	values := standardSetupValues(server.URL)
+	fileSystem := newWizardFileSystem()
+	fileSystem.addFile("/home/ada/.zshrc", []byte(strings.Join([]string{
+		"export ANTHROPIC_AUTH_TOKEN='" + values.AuthToken + "'",
+		"export ANTHROPIC_BASE_URL='" + values.BaseURL + "'",
+		"export ANTHROPIC_MODEL='claude-stale'",
+		"",
+	}, "\n")), 0o600)
+	var output bytes.Buffer
+	runner := newRunner(Options{
+		System:  testSystem(fileSystem, standardSetupEnv(values)),
+		Gateway: testGateway(server),
+		Prompter: &scriptedPrompter{responses: []promptResponse{
+			{kind: "confirm", confirm: true},
+		}},
+		Output: &output,
+	})
+
+	initial, err := runner.readAndDiagnose(context.Background())
+	if err != nil {
+		t.Fatalf("readAndDiagnose() error = %v", err)
+	}
+	if !initial.Diagnostics.HasRepairableStaleShellModelWarnings() {
+		t.Fatalf("initial diagnostics had no repairable warnings:\n%s", diagnose.Render(initial.Diagnostics, diagnose.RenderOptions{}))
+	}
+
+	err = runner.runRepair(context.Background(), initial)
+	if err != nil {
+		t.Fatalf("runRepair() error = %v\n%s", err, output.String())
+	}
+
+	rendered := output.String()
+	assertContains(t, rendered, "Final diagnostics: WARN")
+	assertContains(t, rendered, "Configured with warnings")
+	assertContains(t, rendered, "Restart your terminal and IDE")
+	assertNotContains(t, rendered, "Setup incomplete")
 }
 
 func TestModelPromptsRedactTokensInGatewayModelIDs(t *testing.T) {
@@ -187,6 +392,7 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 				Status:  core.StatusWARN,
 				Title:   "Probe",
 				Summary: `probe failed for model "claude-` + token + `" at /home/ada/.claude/settings.json`,
+				Details: []string{`reason: model probe failed for sk-` + token + ` in /home/ada/.claude/settings.json`},
 			}},
 		}},
 	}
@@ -197,6 +403,369 @@ func TestDiagnosticSummaryRedactsSecretsAndHomePaths(t *testing.T) {
 	assertNotContains(t, rendered, token)
 	assertNotContains(t, rendered, "/home/ada")
 	assertContains(t, rendered, "~/")
+	assertContains(t, rendered, "- WARN: probe failed for model")
+	assertNotContains(t, rendered, "[Model Probes / Probe]")
+	assertNotContains(t, rendered, "reason: model probe failed")
+}
+
+func TestDiagnosticSummaryRendersFindingsBeforeUncoveredChecks(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-summary-secret-1234567890"
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Sections: []core.DiagnosticSection{
+			{
+				Title: "Gateway",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "gateway.validation",
+					Status:  core.StatusFAIL,
+					Title:   "Gateway validation",
+					Summary: "gateway validation failed",
+					Details: []string{"raw gateway detail for " + token},
+				}},
+			},
+			{
+				Title: "Claude Code CLI",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "claude-cli.version",
+					Status:  core.StatusWARN,
+					Title:   "claude --version",
+					Summary: "Claude Code CLI check failed",
+					Details: []string{"exit status 127"},
+				}},
+			},
+			{
+				Title: "Config Sources",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "config-sources.01",
+					Status:  core.StatusWARN,
+					Title:   "Malformed source",
+					Summary: "Failed to parse /home/ada/.claude/settings.json",
+					Details: []string{"raw value: " + token},
+				}},
+			},
+			{
+				Title: "Project Overrides",
+				Checks: []core.DiagnosticCheck{{
+					ID:      "project-overrides.01",
+					Status:  core.StatusWARN,
+					Title:   "Project override",
+					Summary: "Project override differs from terminal config",
+					Details: []string{"path: /home/ada/project/.claude/settings.local.json"},
+				}},
+			},
+		},
+		Findings: []core.DiagnosticFinding{{
+			ID:      "gateway.current",
+			Status:  core.StatusFAIL,
+			Title:   "Gateway: token rejected",
+			Summary: "The gateway rejected ANTHROPIC_AUTH_TOKEN.",
+			Evidence: []string{
+				"request URL: https://gateway.example.com/v1/models?api_key=" + token,
+				"HTTP status: 401",
+				"gateway message: gateway rejected token " + token + " " + strings.Repeat("x", 240),
+			},
+			Remediation:   "Update the active token in ~/.zshrc or choose one source of truth.",
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertContains(t, rendered, "Initial diagnostics: FAIL")
+	assertContains(t, rendered, "- FAIL Gateway: token rejected")
+	assertContains(t, rendered, "why: The gateway rejected ANTHROPIC_AUTH_TOKEN.")
+	assertContains(t, rendered, "evidence: request URL: https://gateway.example.com/v1/models")
+	assertContains(t, rendered, "evidence: HTTP status: 401")
+	assertContains(t, rendered, "fix: Update the active token")
+	assertContains(t, rendered, "- WARN [Claude Code CLI / claude --version] Claude Code CLI check failed")
+	assertContains(t, rendered, "exit status 127")
+	assertContains(t, rendered, "- WARN [Config Sources / Malformed source] Failed to parse ~/.claude/settings.json")
+	assertContains(t, rendered, "- WARN [Project Overrides / Project override] Project override differs from terminal config")
+	assertNotContains(t, rendered, "gateway validation failed")
+	assertNotContains(t, rendered, "raw gateway detail")
+	assertNotContains(t, rendered, token)
+
+	if strings.Index(rendered, "Gateway: token rejected") > strings.Index(rendered, "Claude Code CLI check failed") {
+		t.Fatalf("finding rendered after uncovered check:\n%s", rendered)
+	}
+	for _, line := range strings.Split(rendered, "\n") {
+		if strings.Contains(line, "gateway message:") && len(line) > 200 {
+			t.Fatalf("gateway evidence line too long (%d chars): %q", len(line), line)
+		}
+	}
+}
+
+func TestDiagnosticSummaryOmitsLongGatewayDetailThatReviewDetailsKeeps(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-longdetail1234567890"
+	longDetail := "Key Hash abc123 LiteLLM_VerificationTokenTable gateway rejected token " + token + " from /home/ada/.cache/llmgate " +
+		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
+	gatewayErr := &gateway.Error{
+		Kind:       gateway.FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     longDetail,
+	}
+	explanation := gateway.ExplainFailure(gatewayErr)
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Title:   "Gateway validation",
+				Status:  core.StatusFAIL,
+				Summary: "gateway validation failed",
+				Details: []string{"reason: " + gatewayErr.Error()},
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:            "gateway.current",
+			Status:        core.StatusFAIL,
+			Title:         "Gateway: token rejected",
+			Summary:       explanation.Cause,
+			Evidence:      explanation.Evidence,
+			Remediation:   explanation.Remediation,
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+	summary := output.String()
+	reviewDetails := diagnose.Render(result, diagnose.RenderOptions{})
+
+	assertContains(t, summary, "- FAIL Gateway: token rejected")
+	assertContains(t, summary, "gateway message:")
+	assertNotContains(t, summary, "LiteLLM_VerificationTokenTable")
+	assertNotContains(t, summary, token)
+	assertContains(t, reviewDetails, "LiteLLM_VerificationTokenTable")
+	assertContains(t, reviewDetails, "sk-...7890")
+	assertContains(t, reviewDetails, "~/.cache/llmgate")
+	assertNotContains(t, reviewDetails, token)
+}
+
+func TestDiagnosticSummaryRedactsGatewayEvidenceBeforeTruncating(t *testing.T) {
+	var output bytes.Buffer
+	token := "plain-secret-token-1234567890"
+	detail := strings.Repeat("x", 170) + token + " tail"
+	explanation := gateway.ExplainFailure(&gateway.Error{
+		Kind:       gateway.FailureHTTP,
+		Operation:  "model list",
+		StatusCode: http.StatusBadGateway,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     detail,
+	})
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Findings: []core.DiagnosticFinding{{
+			ID:          "gateway.current",
+			Status:      core.StatusFAIL,
+			Title:       "Gateway: HTTP request failed",
+			Summary:     explanation.Cause,
+			Evidence:    explanation.Evidence,
+			Remediation: explanation.Remediation,
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, token[:7])
+}
+
+func TestDiagnosticSummaryRedactsAllFindingFields(t *testing.T) {
+	var output bytes.Buffer
+	token := "sk-findingsecret1234567890"
+	result := diagnose.Result{
+		Read: configReadForSummary(token),
+		Findings: []core.DiagnosticFinding{{
+			ID:          "gateway.current",
+			Status:      core.StatusFAIL,
+			Title:       "Gateway: token rejected " + token + " at /home/ada/.claude/settings.json",
+			Summary:     "Cause references " + token + " at /home/ada/.claude/settings.json",
+			Evidence:    []string{"request URL: https://gateway.example.com/v1/models?api_key=" + token, "path: /home/ada/.cache/llmgate"},
+			Remediation: "Update " + token + " in /home/ada/.zshrc",
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, "/home/ada")
+	assertContains(t, rendered, "sk-...7890")
+	assertContains(t, rendered, "~/.claude/settings.json")
+	assertContains(t, rendered, "~/.cache/llmgate")
+	assertContains(t, rendered, "~/.zshrc")
+}
+
+func TestDiagnosticSummaryOmitsNoisyFindingLinesForOKDiagnostics(t *testing.T) {
+	var output bytes.Buffer
+	result := diagnose.Result{
+		Read: configReadForSummary("sk-oksecret1234567890"),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Status:  core.StatusOK,
+				Title:   "Gateway validation",
+				Summary: "gateway model list succeeded",
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:      "gateway.current",
+			Status:  core.StatusOK,
+			Title:   "Gateway: healthy",
+			Summary: "The gateway is healthy.",
+		}},
+	}
+
+	runner{out: &output}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	if rendered != "Initial diagnostics: OK\n" {
+		t.Fatalf("OK summary = %q, want quiet status line only", rendered)
+	}
+	assertNotContains(t, rendered, "why:")
+	assertNotContains(t, rendered, "evidence:")
+	assertNotContains(t, rendered, "fix:")
+	assertNotContains(t, rendered, "Gateway: healthy")
+}
+
+func TestDiagnosticSummaryColorsOnlyStatusTokens(t *testing.T) {
+	var output bytes.Buffer
+	result := diagnose.Result{
+		Read: configReadForSummary("sk-color-secret-1234567890"),
+		Sections: []core.DiagnosticSection{{
+			Title: "Gateway",
+			Checks: []core.DiagnosticCheck{{
+				ID:      "gateway.validation",
+				Status:  core.StatusFAIL,
+				Title:   "Gateway validation",
+				Summary: "gateway validation failed",
+			}},
+		}},
+		Findings: []core.DiagnosticFinding{{
+			ID:            "gateway.current",
+			Status:        core.StatusFAIL,
+			Title:         "Gateway: token rejected",
+			Summary:       "The gateway rejected ANTHROPIC_AUTH_TOKEN.",
+			RelatedChecks: []string{"gateway.validation"},
+		}},
+	}
+
+	runner{out: &output, color: true}.printDiagnosticSummary("Initial diagnostics", result)
+
+	rendered := output.String()
+	assertContains(t, rendered, "Initial diagnostics: \x1b[31mFAIL\x1b[0m")
+	assertContains(t, rendered, "- \x1b[31mFAIL\x1b[0m Gateway: token rejected")
+	assertNotContains(t, rendered, "\x1b[31mGateway")
+	assertNotContains(t, rendered, "\x1b[31mThe gateway")
+}
+
+func TestGatewayRecoveryPromptUsesConciseRedactedGatewayExplanation(t *testing.T) {
+	token := "sk-promptsecret1234567890"
+	longDetail := "gateway rejected token " + token + " " +
+		strings.Repeat("diagnostic context ", 20) + "LiteLLM_VerificationTokenTable"
+	prompts := &recordingPrompter{selectResponses: []string{string(gatewayRecoveryEdit)}}
+
+	got, err := promptGatewayRecovery(context.Background(), prompts, &gateway.Error{
+		Kind:       gateway.FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models?api_key=" + token,
+		Detail:     longDetail,
+	}, token, displayOptions{HomeDir: "/home/ada", GOOS: "linux"})
+	if err != nil {
+		t.Fatalf("promptGatewayRecovery() error = %v", err)
+	}
+	if got != gatewayRecoveryEdit {
+		t.Fatalf("recovery = %q, want edit", got)
+	}
+
+	description := strings.Join(prompts.descriptions, "\n")
+	assertContains(t, description, "Cause: The gateway rejected the configured ANTHROPIC_AUTH_TOKEN.")
+	assertContains(t, description, "Evidence: request URL: https://gateway.example.com/v1/models")
+	assertContains(t, description, "Evidence: HTTP status: 401")
+	assertContains(t, description, "Fix: Update ANTHROPIC_AUTH_TOKEN")
+	assertNotContains(t, description, "LiteLLM_VerificationTokenTable")
+	assertNotContains(t, description, token)
+}
+
+func TestProgressReporterIsSilentForNonTerminalOutput(t *testing.T) {
+	var output bytes.Buffer
+	reporter := newProgressReporter(&output, &testEnvironment{values: map[string]string{"TERM": "xterm-256color"}}, false)
+	if reporter.animate || reporter.log || reporter.color {
+		t.Fatalf("non-terminal progress flags = animate:%t log:%t color:%t, want all false", reporter.animate, reporter.log, reporter.color)
+	}
+
+	called := false
+	err := reporter.Run("Checking gateway model list.", func() error {
+		called = true
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !called {
+		t.Fatalf("Run() did not call wrapped function")
+	}
+	if got := output.String(); got != "" {
+		t.Fatalf("non-terminal progress wrote output %q, want silence", got)
+	}
+}
+
+func TestProgressReporterEnablesStatusOutputOnlyForTTY(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix PTY smoke test is skipped on Windows")
+	}
+	pty, err := xpty.NewUnixPty(80, 24)
+	if err != nil {
+		t.Skipf("pty unavailable: %v", err)
+	}
+	defer func() {
+		_ = pty.Close()
+	}()
+
+	env := &testEnvironment{values: map[string]string{"TERM": "xterm-256color"}}
+	reporter := newProgressReporter(pty.Slave(), env, false)
+	if !reporter.animate || !reporter.log || !reporter.color {
+		t.Fatalf("TTY progress flags = animate:%t log:%t color:%t, want all true", reporter.animate, reporter.log, reporter.color)
+	}
+
+	accessible := newProgressReporter(pty.Slave(), env, true)
+	if accessible.animate || !accessible.log || accessible.color {
+		t.Fatalf("accessible TTY progress flags = animate:%t log:%t color:%t, want animate false, log true, color false", accessible.animate, accessible.log, accessible.color)
+	}
+
+	dumb := newProgressReporter(pty.Slave(), &testEnvironment{values: map[string]string{"TERM": "dumb"}}, false)
+	if dumb.animate || !dumb.log || dumb.color {
+		t.Fatalf("dumb TTY progress flags = animate:%t log:%t color:%t, want animate false, log true, color false", dumb.animate, dumb.log, dumb.color)
+	}
+}
+
+func TestGatewayProgressMessagesSanitizeSecrets(t *testing.T) {
+	token := "sk-goodtoken1234567890"
+	rawBaseURL := "https://" + token + "@gateway.example.com/proxy/v1/models?api_key=" + token + "#fragment"
+	invalidBaseURL := "https://user:other-secret@gateway example.com"
+	display := displayOptions{HomeDir: "/home/ada", GOOS: "linux"}
+
+	rendered := gatewayModelListProgressMessage(rawBaseURL, token, display) + "\n" +
+		gatewayProbeProgressMessage(rawBaseURL, token, "claude-"+token, display) + "\n" +
+		gatewayModelListProgressMessage(invalidBaseURL, token, display)
+
+	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, "other-secret")
+	assertNotContains(t, rendered, rawBaseURL)
+	assertNotContains(t, rendered, invalidBaseURL)
+	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/models")
+	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/chat/completions")
+	assertContains(t, rendered, "claude-sk-...7890")
+	assertContains(t, rendered, "Checking gateway model list for configured gateway URL.")
 }
 
 func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {
@@ -504,6 +1073,32 @@ func replaceServerURL(responses []promptResponse, serverURL string) []promptResp
 
 func testGateway(server *httptest.Server) gateway.Client {
 	return gateway.Client{HTTPClient: server.Client(), Cache: gateway.NewCache()}
+}
+
+func standardSetupValues(baseURL string) core.SetupValues {
+	return core.SetupValues{
+		AuthToken:   "sk-goodtoken1234567890",
+		BaseURL:     baseURL,
+		Model:       "claude-sonnet-4",
+		HaikuModel:  "claude-haiku-4",
+		SonnetModel: "claude-sonnet-4",
+		OpusModel:   "claude-opus-4",
+	}
+}
+
+func standardSetupEnv(values core.SetupValues) map[string]string {
+	env := values.Map()
+	env["SHELL"] = "/bin/zsh"
+	return env
+}
+
+func currentTerminalNoteLine(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.HasPrefix(line, "Current terminal note:") {
+			return line
+		}
+	}
+	return ""
 }
 
 func configReadForSummary(token string) config.ReadResult {
@@ -963,6 +1558,28 @@ func (i testFileInfo) Sys() any {
 }
 
 type panicFileSystem struct{}
+
+type panicEnvironment struct{}
+
+func (panicEnvironment) Environ() []string {
+	panic("unexpected environ")
+}
+
+func (panicEnvironment) LookupEnv(string) (string, bool) {
+	panic("unexpected lookup env")
+}
+
+func (panicEnvironment) Getenv(string) string {
+	panic("unexpected getenv")
+}
+
+func (panicEnvironment) Setenv(string, string) error {
+	panic("unexpected setenv")
+}
+
+func (panicEnvironment) Unsetenv(string) error {
+	panic("unexpected unsetenv")
+}
 
 func (panicFileSystem) ReadFile(string) ([]byte, error) {
 	panic("unexpected read")

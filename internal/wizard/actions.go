@@ -47,13 +47,15 @@ type displayOptions struct {
 }
 
 type runner struct {
-	sys     system.System
-	gateway gateway.Client
-	prompts Prompter
-	out     io.Writer
-	network bool
-	apply   apply.ApplyOptions
-	command time.Duration
+	sys      system.System
+	gateway  gateway.Client
+	prompts  Prompter
+	out      io.Writer
+	network  bool
+	apply    apply.ApplyOptions
+	command  time.Duration
+	color    bool
+	progress progressReporter
 }
 
 func Run(ctx context.Context, opts Options) error {
@@ -74,6 +76,7 @@ func Run(ctx context.Context, opts Options) error {
 		_, _ = fmt.Fprintln(r.out, "No files were read or changed.")
 		return ErrStartupDeclined
 	}
+	r.enableTerminalFeatures(opts.Accessible)
 
 	result, err := r.readAndDiagnose(ctx)
 	if err != nil {
@@ -96,7 +99,7 @@ func Run(ctx context.Context, opts Options) error {
 		case actionRepair:
 			return r.runRepair(ctx, result)
 		case actionReview:
-			_, _ = fmt.Fprint(r.out, diagnose.Render(result.Diagnostics, diagnose.RenderOptions{}))
+			_, _ = fmt.Fprint(r.out, diagnose.Render(result.Diagnostics, diagnose.RenderOptions{Color: r.color}))
 			return nil
 		case actionExit:
 			_, _ = fmt.Fprintln(r.out, "No files were changed.")
@@ -135,16 +138,40 @@ func newRunner(opts Options) runner {
 	}
 }
 
+func (r *runner) enableTerminalFeatures(accessible bool) {
+	r.color = shouldUseANSI(r.out, r.sys.Env, accessible)
+	r.progress = newProgressReporter(r.out, r.sys.Env, accessible)
+}
+
 func (r runner) readAndDiagnose(ctx context.Context) (runResult, error) {
+	return r.readAndDiagnoseWithOptions(ctx, diagnose.Options{})
+}
+
+func (r runner) readAndDiagnoseWithOptions(ctx context.Context, opts diagnose.Options) (runResult, error) {
 	read, err := config.Read(r.sys, true)
 	if err != nil {
 		return runResult{}, err
 	}
-	diagnostics, err := diagnose.Run(ctx, r.sys, read, diagnose.Options{
-		NetworkChecks:  r.network,
-		Gateway:        r.gateway,
-		CommandTimeout: r.command,
-	})
+	var diagnostics diagnose.Result
+	runDiagnostics := func() error {
+		var diagnoseErr error
+		opts.NetworkChecks = r.network
+		opts.Gateway = r.gateway
+		opts.CommandTimeout = r.command
+		diagnostics, diagnoseErr = diagnose.Run(ctx, r.sys, read, diagnose.Options{
+			NetworkChecks:            opts.NetworkChecks,
+			Gateway:                  opts.Gateway,
+			CommandTimeout:           opts.CommandTimeout,
+			CurrentMode:              opts.CurrentMode,
+			BypassFailedGatewayCache: opts.BypassFailedGatewayCache,
+		})
+		return diagnoseErr
+	}
+	if r.network {
+		err = r.progress.Run("Running diagnostics; network checks may list gateway models and send tiny ping probes.", runDiagnostics)
+	} else {
+		err = runDiagnostics()
+	}
 	if err != nil {
 		return runResult{}, err
 	}
@@ -173,8 +200,11 @@ gatewayLoop:
 
 		var modelList gateway.ModelListResult
 		for {
-			var err error
-			modelList, err = r.gateway.ListModels(ctx, baseURL, token, gateway.RequestOptions{BypassFailedCache: bypassGatewayFailure})
+			err := r.progress.Run(gatewayModelListProgressMessage(baseURL, token, display), func() error {
+				var listErr error
+				modelList, listErr = r.gateway.ListModels(ctx, baseURL, token, gateway.RequestOptions{BypassFailedCache: bypassGatewayFailure})
+				return listErr
+			})
 			if err == nil {
 				break
 			}
@@ -278,7 +308,11 @@ func (r runner) chooseModels(ctx context.Context, models []string, defaults core
 
 func (r runner) validateSelectedModels(ctx context.Context, values core.SetupValues) error {
 	for _, model := range uniqueModels(values) {
-		if _, err := r.gateway.ProbeModel(ctx, values.BaseURL, values.AuthToken, model, gateway.RequestOptions{BypassFailedCache: true}); err != nil {
+		err := r.progress.Run(gatewayProbeProgressMessage(values.BaseURL, values.AuthToken, model, displayOptions{}), func() error {
+			_, probeErr := r.gateway.ProbeModel(ctx, values.BaseURL, values.AuthToken, model, gateway.RequestOptions{BypassFailedCache: true})
+			return probeErr
+		})
+		if err != nil {
 			return err
 		}
 	}
@@ -320,7 +354,7 @@ func (r runner) selectTargetsAndApplySetup(ctx context.Context, paths system.Dis
 			continue
 		}
 
-		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken})
+		return r.applyPlanAndFinalize(ctx, plan, []string{values.AuthToken}, setupFinalDiagnosticOptions(), true)
 	}
 }
 
@@ -349,10 +383,17 @@ func (r runner) runRepair(ctx context.Context, result runResult) error {
 		_, _ = fmt.Fprintln(r.out, "No files were changed.")
 		return nil
 	}
-	return r.applyPlanAndFinalize(ctx, plan, nil)
+	return r.applyPlanAndFinalize(ctx, plan, nil, diagnose.Options{}, false)
 }
 
-func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string) error {
+func setupFinalDiagnosticOptions() diagnose.Options {
+	return diagnose.Options{
+		CurrentMode:              config.CurrentModeNewSession,
+		BypassFailedGatewayCache: true,
+	}
+}
+
+func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, knownSecrets []string, diagnosticOpts diagnose.Options, printCurrentTerminalNote bool) error {
 	result, err := apply.Apply(r.sys, plan, r.apply)
 	_, _ = fmt.Fprint(r.out, apply.RenderResult(result, apply.RenderOptions{
 		KnownSecrets: knownSecrets,
@@ -363,15 +404,18 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 		return err
 	}
 
-	final, err := r.readAndDiagnose(ctx)
+	final, err := r.readAndDiagnoseWithOptions(ctx, diagnosticOpts)
 	if err != nil {
 		return err
 	}
 	r.printDiagnosticSummary("Final diagnostics", final.Diagnostics)
+	if printCurrentTerminalNote {
+		r.printCurrentTerminalNote(final.Diagnostics)
+	}
 	switch final.Diagnostics.Status() {
 	case core.StatusFAIL:
 		_, _ = fmt.Fprintln(r.out, "Setup incomplete")
-		_, _ = fmt.Fprint(r.out, diagnose.Render(final.Diagnostics, diagnose.RenderOptions{}))
+		_, _ = fmt.Fprint(r.out, diagnose.Render(final.Diagnostics, diagnose.RenderOptions{Color: r.color}))
 		return ErrSetupIncomplete
 	case core.StatusOK:
 		_, _ = fmt.Fprintln(r.out, "Configured")
@@ -382,11 +426,111 @@ func (r runner) applyPlanAndFinalize(ctx context.Context, plan apply.Plan, known
 	return nil
 }
 
+func (r runner) printCurrentTerminalNote(result diagnose.Result) {
+	if !currentTerminalDiffersFromNewSession(result) {
+		return
+	}
+	_, _ = fmt.Fprintln(r.out, "Current terminal note: already-running process environment differs from new terminal session for managed llmgate variables. Restart this terminal before relying on its environment values.")
+}
+
+func currentTerminalDiffersFromNewSession(result diagnose.Result) bool {
+	currentEnv := map[string]core.ConfigValue{}
+	for _, source := range result.Read.Sources {
+		if source.Label.Kind != core.SourceCurrentEnv {
+			continue
+		}
+		for name, value := range source.Values {
+			if core.IsManaged(name) {
+				currentEnv[name] = value
+			}
+		}
+	}
+
+	for _, name := range core.AllManagedNames() {
+		envValue, envOK := currentEnv[name]
+		sessionValue, sessionOK := result.Resolution.Current.Get(name)
+		if envOK != sessionOK {
+			return true
+		}
+		if envOK && sessionOK && envValue.Value != sessionValue.Value {
+			return true
+		}
+	}
+	return false
+}
+
 func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 	display := displayOptions{HomeDir: result.Read.Paths.HomeDir, GOOS: result.Read.Paths.GOOS}
 	knownSecrets := diagnose.KnownSecrets(result)
-	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, result.Status())
-	for _, section := range result.Sections {
+	_, _ = fmt.Fprintf(r.out, "%s: %s\n", title, colorStatus(result.Status(), r.color))
+
+	findings := actionableFindings(result.Findings)
+	if len(findings) > 0 {
+		r.printDiagnosticFindings(findings, knownSecrets, display)
+		covered := diagnose.CoveredCheckIDs(findings)
+		r.printDiagnosticChecks(result.Sections, knownSecrets, display, covered, true)
+		return
+	}
+
+	r.printDiagnosticCheckSummaries(result.Sections, knownSecrets, display)
+}
+
+func (r runner) printDiagnosticFindings(findings []core.DiagnosticFinding, knownSecrets []string, display displayOptions) {
+	for _, finding := range diagnose.OrderedFindings(findings) {
+		title := finding.Title
+		if title == "" {
+			title = finding.Summary
+		}
+		title = sanitizeSummaryLine(title, knownSecrets, display)
+		_, _ = fmt.Fprintf(r.out, "- %s %s\n", colorStatus(finding.Status, r.color), title)
+
+		summary := sanitizeSummaryLine(finding.Summary, knownSecrets, display)
+		if summary != "" && summary != title {
+			_, _ = fmt.Fprintf(r.out, "  why: %s\n", summary)
+		}
+		for _, evidence := range finding.Evidence {
+			evidence = sanitizeSummaryLine(evidence, knownSecrets, display)
+			if evidence == "" {
+				continue
+			}
+			_, _ = fmt.Fprintf(r.out, "  evidence: %s\n", evidence)
+		}
+		remediation := sanitizeSummaryLine(finding.Remediation, knownSecrets, display)
+		if remediation != "" {
+			_, _ = fmt.Fprintf(r.out, "  fix: %s\n", remediation)
+		}
+	}
+}
+
+func (r runner) printDiagnosticChecks(sections []core.DiagnosticSection, knownSecrets []string, display displayOptions, covered map[string]bool, short bool) {
+	for _, section := range sections {
+		for _, check := range section.Checks {
+			if check.Status != core.StatusWARN && check.Status != core.StatusFAIL {
+				continue
+			}
+			if covered != nil && covered[check.ID] {
+				continue
+			}
+			summary := check.Summary
+			if summary == "" {
+				summary = check.Title
+			}
+			summary = sanitizeDiagnosticLine(summary, knownSecrets, display, short)
+			location := diagnosticLocation(section.Title, check.Title, summary)
+			_, _ = fmt.Fprintf(r.out, "- %s [%s] %s\n", colorStatus(check.Status, r.color), sanitizeDiagnosticLine(location, knownSecrets, display, short), summary)
+			for _, detail := range check.Details {
+				detail = sanitizeDiagnosticLine(detail, knownSecrets, display, short)
+				if detail == "" {
+					continue
+				}
+				_, _ = fmt.Fprintf(r.out, "  - %s\n", detail)
+			}
+		}
+	}
+}
+
+func (r runner) printDiagnosticCheckSummaries(sections []core.DiagnosticSection, knownSecrets []string, display displayOptions) {
+	for _, section := range sections {
 		for _, check := range section.Checks {
 			if check.Status != core.StatusWARN && check.Status != core.StatusFAIL {
 				continue
@@ -396,9 +540,27 @@ func (r runner) printDiagnosticSummary(title string, result diagnose.Result) {
 				summary = check.Title
 			}
 			summary = sanitizeText(summary, knownSecrets, display)
-			_, _ = fmt.Fprintf(r.out, "- %s: %s\n", check.Status, summary)
+			_, _ = fmt.Fprintf(r.out, "- %s: %s\n", colorStatus(check.Status, r.color), summary)
 		}
 	}
+}
+
+func actionableFindings(findings []core.DiagnosticFinding) []core.DiagnosticFinding {
+	actionable := make([]core.DiagnosticFinding, 0, len(findings))
+	for _, finding := range findings {
+		if finding.Status != core.StatusWARN && finding.Status != core.StatusFAIL {
+			continue
+		}
+		actionable = append(actionable, finding)
+	}
+	return actionable
+}
+
+func diagnosticLocation(sectionTitle, checkTitle, summary string) string {
+	if checkTitle == "" || checkTitle == summary || checkTitle == sectionTitle {
+		return sectionTitle
+	}
+	return sectionTitle + " / " + checkTitle
 }
 
 func setupDefaults(resolution config.Resolution) credentialDefaults {
@@ -489,4 +651,23 @@ func sanitizeText(value string, knownSecrets []string, display displayOptions) s
 		HomeDir:      display.HomeDir,
 		GOOS:         display.GOOS,
 	})
+}
+
+func sanitizeSummaryLine(value string, knownSecrets []string, display displayOptions) string {
+	value = strings.TrimSpace(sanitizeText(value, knownSecrets, display))
+	if value == "" {
+		return ""
+	}
+	const maxSummaryLineLen = 180
+	if len(value) <= maxSummaryLineLen {
+		return value
+	}
+	return value[:maxSummaryLineLen-3] + "..."
+}
+
+func sanitizeDiagnosticLine(value string, knownSecrets []string, display displayOptions, short bool) string {
+	if short {
+		return sanitizeSummaryLine(value, knownSecrets, display)
+	}
+	return sanitizeText(value, knownSecrets, display)
 }

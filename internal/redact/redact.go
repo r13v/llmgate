@@ -12,10 +12,14 @@ import (
 const shortSecretMaxLength = 8
 
 var (
-	bearerPattern          = regexp.MustCompile(`(?i)\b(Bearer\s+)([^\s"',;]+)`)
-	litellmAPIKeyPattern   = regexp.MustCompile(`(?im)\b(x-litellm-api-key\s*:\s*)([^\s"',;]+)`)
-	authTokenAssignPattern = regexp.MustCompile(`(?im)\b(` + core.VarAnthropicAuthToken + `"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,\r\n]+)`)
-	skTokenPattern         = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]*\b`)
+	bearerPattern           = regexp.MustCompile(`(?i)\b(Bearer\s+)([^\s"',;]+)`)
+	litellmAPIKeyPattern    = regexp.MustCompile(`(?im)(["']?\bx-litellm-api-key\b["']?\s*:\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;]+)`)
+	authTokenAssignPattern  = regexp.MustCompile(`(?im)\b(` + core.VarAnthropicAuthToken + `"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,\r\n]+)`)
+	credentialQueryPattern  = regexp.MustCompile(`(?i)([?&;](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token)=)([^&#\s"',;]+)`)
+	credentialAssignPattern = regexp.MustCompile(
+		`(?im)\b((?:api[_-]?key|access[_-]?token|refresh[_-]?token|token|x-api-key)"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,&\r\n]+)`,
+	)
+	skTokenPattern = regexp.MustCompile(`\bsk-[A-Za-z0-9][A-Za-z0-9_-]*\b`)
 )
 
 type Options struct {
@@ -29,6 +33,8 @@ func Text(input string, opts Options) string {
 	output = replaceValueGroup(output, bearerPattern, 2)
 	output = replaceValueGroup(output, litellmAPIKeyPattern, 2)
 	output = replaceValueGroup(output, authTokenAssignPattern, 2)
+	output = replaceValueGroupPreservingMasked(output, credentialQueryPattern, 2)
+	output = replaceValueGroupPreservingMasked(output, credentialAssignPattern, 2)
 	output = redactKnownSecrets(output, opts.KnownSecrets)
 	output = skTokenPattern.ReplaceAllStringFunc(output, MaskSecret)
 	if opts.HomeDir != "" {
@@ -117,6 +123,28 @@ func replaceValueGroup(input string, pattern *regexp.Regexp, valueGroup int) str
 	return output.String()
 }
 
+func replaceValueGroupPreservingMasked(input string, pattern *regexp.Regexp, valueGroup int) string {
+	matches := pattern.FindAllStringSubmatchIndex(input, -1)
+	if len(matches) == 0 {
+		return input
+	}
+
+	var output strings.Builder
+	last := 0
+	for _, match := range matches {
+		valueStart := match[valueGroup*2]
+		valueEnd := match[valueGroup*2+1]
+		if valueStart < 0 || valueEnd < 0 {
+			continue
+		}
+		output.WriteString(input[last:valueStart])
+		output.WriteString(maskMaybeQuotedPreservingMasked(input[valueStart:valueEnd]))
+		last = valueEnd
+	}
+	output.WriteString(input[last:])
+	return output.String()
+}
+
 func redactKnownSecrets(input string, secrets []string) string {
 	known := make([]string, 0, len(secrets))
 	seen := make(map[string]struct{}, len(secrets))
@@ -150,6 +178,38 @@ func maskMaybeQuoted(value string) string {
 		}
 	}
 	return MaskSecret(value)
+}
+
+func maskMaybeQuotedPreservingMasked(value string) string {
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '"' || first == '\'') && first == last {
+			unquoted := value[1 : len(value)-1]
+			if isMaskedValue(unquoted) {
+				return value
+			}
+			return string(first) + MaskSecret(unquoted) + string(last)
+		}
+	}
+	if isMaskedValue(value) {
+		return value
+	}
+	return MaskSecret(value)
+}
+
+func isMaskedValue(value string) bool {
+	return value == "***" ||
+		hasMaskedSuffix(value, "***") ||
+		value == "sk-[redacted]" ||
+		hasMaskedSuffix(value, "sk-...")
+}
+
+func hasMaskedSuffix(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	return len([]rune(value)) == len([]rune(prefix))+4
 }
 
 func lastRunes(value string, n int) string {

@@ -306,6 +306,155 @@ func TestSanitizedDetailsAreTruncated(t *testing.T) {
 	}
 }
 
+func TestSanitizedDetailsRedactGenericTokenFields(t *testing.T) {
+	const upstreamToken = "upstream-token-1234"
+
+	detail := sanitizedResponseDetail([]byte(`{"token":"`+upstreamToken+`","reason":"bad credentials"}`), "configured-token-5678")
+
+	if strings.Contains(detail, upstreamToken) {
+		t.Fatalf("detail leaked generic token field: %q", detail)
+	}
+	if !strings.Contains(detail, `"token":"***1234"`) {
+		t.Fatalf("detail = %q, want masked token field", detail)
+	}
+}
+
+func TestExplainFailureUsesStructuredGatewayError(t *testing.T) {
+	err := &Error{
+		Kind:       FailureAuth,
+		Operation:  "model list",
+		StatusCode: http.StatusUnauthorized,
+		URL:        "https://gateway.example.com/v1/models",
+		Detail:     "Key Hash abc123 LiteLLM_VerificationTokenTable gateway rejected token " + strings.Repeat("x", 240),
+		Cached:     true,
+	}
+
+	explanation := ExplainFailure(err)
+
+	if explanation.Cause != "The gateway rejected the configured ANTHROPIC_AUTH_TOKEN." {
+		t.Fatalf("Cause = %q", explanation.Cause)
+	}
+	for _, want := range []string{
+		"operation: model list",
+		"request URL: https://gateway.example.com/v1/models",
+		"failure kind: auth",
+		"HTTP status: 401",
+		"cached failure: true",
+	} {
+		if !containsString(explanation.Evidence, want) {
+			t.Fatalf("Evidence missing %q: %#v", want, explanation.Evidence)
+		}
+	}
+	message := evidenceWithPrefix(explanation.Evidence, "gateway message: ")
+	if message == "" {
+		t.Fatalf("Evidence missing gateway message: %#v", explanation.Evidence)
+	}
+	if strings.Contains(message, "LiteLLM_VerificationTokenTable") {
+		t.Fatalf("gateway message kept noisy raw detail: %q", message)
+	}
+	if !strings.Contains(message, "review details for the full response") {
+		t.Fatalf("gateway message = %q, want concise noisy-detail summary", message)
+	}
+	if explanation.Remediation != "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override." {
+		t.Fatalf("Remediation = %q", explanation.Remediation)
+	}
+}
+
+func TestExplainFailureCoversFailureKinds(t *testing.T) {
+	tests := []struct {
+		name            string
+		kind            FailureKind
+		wantCause       string
+		wantRemediation string
+	}{
+		{
+			name:            "auth",
+			kind:            FailureAuth,
+			wantCause:       "The gateway rejected the configured ANTHROPIC_AUTH_TOKEN.",
+			wantRemediation: "Update ANTHROPIC_AUTH_TOKEN for the active source, or remove the stale override.",
+		},
+		{
+			name:            "network",
+			kind:            FailureNetwork,
+			wantCause:       "llmgate could not reach the configured gateway.",
+			wantRemediation: "Check ANTHROPIC_BASE_URL, DNS, VPN/proxy, TLS, and network access.",
+		},
+		{
+			name:            "invalid url",
+			kind:            FailureInvalidURL,
+			wantCause:       "ANTHROPIC_BASE_URL is not a valid gateway URL.",
+			wantRemediation: "Set ANTHROPIC_BASE_URL to an http(s) LiteLLM gateway root or /v1 URL.",
+		},
+		{
+			name:            "invalid json",
+			kind:            FailureInvalidJSON,
+			wantCause:       "The gateway response was not OpenAI-compatible JSON.",
+			wantRemediation: "Inspect the gateway response and OpenAI-compatible model-list route.",
+		},
+		{
+			name:            "empty models",
+			kind:            FailureEmptyModels,
+			wantCause:       "The gateway returned no usable model IDs.",
+			wantRemediation: "Configure the gateway to expose at least one usable model ID.",
+		},
+		{
+			name:            "http",
+			kind:            FailureHTTP,
+			wantCause:       "The gateway returned a non-success HTTP response.",
+			wantRemediation: "Inspect the gateway/upstream logs, base URL, and selected model routing.",
+		},
+		{
+			name:            "unknown",
+			kind:            FailureKind("custom"),
+			wantCause:       defaultFailureCause(),
+			wantRemediation: defaultFailureRemediation(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			explanation := ExplainFailure(&Error{
+				Kind:       tt.kind,
+				Operation:  "model list",
+				StatusCode: http.StatusBadGateway,
+				URL:        "https://gateway.example.com/v1/models",
+				Detail:     "plain gateway detail",
+			})
+
+			if explanation.Cause != tt.wantCause {
+				t.Fatalf("Cause = %q, want %q", explanation.Cause, tt.wantCause)
+			}
+			if explanation.Remediation != tt.wantRemediation {
+				t.Fatalf("Remediation = %q, want %q", explanation.Remediation, tt.wantRemediation)
+			}
+			if tt.kind != "" && !containsString(explanation.Evidence, "failure kind: "+string(tt.kind)) {
+				t.Fatalf("Evidence missing failure kind %q: %#v", tt.kind, explanation.Evidence)
+			}
+			if !containsString(explanation.Evidence, "gateway message: plain gateway detail") {
+				t.Fatalf("Evidence missing gateway detail: %#v", explanation.Evidence)
+			}
+		})
+	}
+}
+
+func TestExplainFailureHandlesPlainError(t *testing.T) {
+	explanation := ExplainFailure(errors.New("dial tcp failed"))
+
+	if explanation.Cause == "" || explanation.Remediation == "" {
+		t.Fatalf("explanation missing cause/remediation: %#v", explanation)
+	}
+	if !containsString(explanation.Evidence, "reason: dial tcp failed") {
+		t.Fatalf("Evidence = %#v, want plain reason", explanation.Evidence)
+	}
+}
+
+func TestExplainFailureHandlesNil(t *testing.T) {
+	explanation := ExplainFailure(nil)
+	if explanation.Cause != "" || len(explanation.Evidence) != 0 || explanation.Remediation != "" {
+		t.Fatalf("ExplainFailure(nil) = %#v, want empty explanation", explanation)
+	}
+}
+
 func TestResponseBodySizeLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadGateway)
@@ -542,6 +691,24 @@ func assertFailure(t *testing.T, err error, want FailureKind) *Error {
 		t.Fatalf("error kind = %s, want %s: %v", gatewayErr.Kind, want, gatewayErr)
 	}
 	return gatewayErr
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceWithPrefix(values []string, prefix string) string {
+	for _, value := range values {
+		if strings.HasPrefix(value, prefix) {
+			return value
+		}
+	}
+	return ""
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

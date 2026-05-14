@@ -17,7 +17,8 @@
 - `internal/gateway`: LiteLLM/OpenAI-compatible model listing, model probes,
   recommendation, and request-result caching.
 - `internal/config`: approved source reads and source precedence resolution.
-- `internal/diagnose`: diagnostic engine and renderer.
+- `internal/diagnose`: diagnostic engine, structured finding builder, and
+  renderer.
 - `internal/apply`: apply-plan construction, backups, atomic writes, and Windows
   user environment updates.
 - `internal/wizard`: no-argument interactive flow built around prompt
@@ -45,6 +46,16 @@
   records redacted with `internal/redact` behavior.
 - Use `config.Read(..., approved)` as the read gate and `diagnose.Run` as the
   aggregation boundary for initial and final diagnostics.
+- `internal/diagnose/findings.go` builds `core.DiagnosticFinding` records for
+  gateway failures, probes, config conflicts, and IDE drift. Wizard summaries
+  render actionable findings first, then uncovered WARN/FAIL checks by
+  `RelatedChecks`; `Review details` remains section/check based.
+- Initial diagnostics and repair final diagnostics use current-process mode.
+  Setup final diagnostics after apply use `config.CurrentModeNewSession` and
+  bypass failed gateway cache entries. Stale process environment values are
+  reported only through `Current terminal note` and must not affect final status.
+- Use `gateway.ExplainFailure` as the shared cause/evidence/remediation source
+  for gateway failures.
 - Shell profile support intentionally handles only active line-based managed
   assignments. Legacy managed blocks are not special.
 - JSONC writers should preserve unrelated settings and comments where practical,
@@ -76,7 +87,7 @@ Useful script checks:
 - Gateway validation first requests `/v1/models`, falls back to `/models` only
   on `404`, and probes selected models through `/v1/chat/completions`.
 - Gateway request caches are keyed by normalized URL, token, and model. Retry
-  paths bypass cached failures.
+  paths and setup final diagnostics bypass cached failures.
 - Diagnostics can downgrade failures to warnings when another configuration
   context is usable.
 - Apply-plan backups use `.llmgate.bak` first, then timestamped backup paths

@@ -46,6 +46,16 @@ type DiagnosticCheck struct {
 	Details []string
 }
 
+type DiagnosticFinding struct {
+	ID            string
+	Status        DiagnosticStatus
+	Title         string
+	Summary       string
+	Evidence      []string
+	Remediation   string
+	RelatedChecks []string
+}
+
 type DiagnosticSection struct {
 	ID     string
 	Title  string

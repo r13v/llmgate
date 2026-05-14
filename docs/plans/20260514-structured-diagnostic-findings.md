@@ -102,12 +102,12 @@ Decision note: the working tree had no uncommitted WIP to reconcile. Keep the ex
 - Create: `internal/diagnose/findings.go`
 - Create: `internal/diagnose/findings_test.go`
 
-- [ ] Add a lean `core.DiagnosticFinding` model with fields for stable ID, status, title, summary, evidence lines, remediation, and related check IDs.
-- [ ] Avoid first-pass fields for tags, source lists, and separate cause text unless implementation proves they are needed for the current renderer.
-- [ ] Keep `internal/core` generic: no product-priority sorting, gateway-specific kinds, or UI ordering rules in this package.
-- [ ] Add finding ordering and coverage helpers in `internal/diagnose`, including a helper that derives covered check IDs from `RelatedChecks`.
-- [ ] Add unit tests for severity ordering, stable sorting, and empty/default behavior.
-- [ ] Run focused core tests before next task.
+- [x] Add a lean `core.DiagnosticFinding` model with fields for stable ID, status, title, summary, evidence lines, remediation, and related check IDs.
+- [x] Avoid first-pass fields for tags, source lists, and separate cause text unless implementation proves they are needed for the current renderer.
+- [x] Keep `internal/core` generic: no product-priority sorting, gateway-specific kinds, or UI ordering rules in this package.
+- [x] Add finding ordering and coverage helpers in `internal/diagnose`, including a helper that derives covered check IDs from `RelatedChecks`.
+- [x] Add unit tests for severity ordering, stable sorting, and empty/default behavior.
+- [x] Run focused core tests before next task.
 
 ### Task 3: Build Findings And Preserve Side-Context Structure
 **Files:**

@@ -548,16 +548,21 @@ func TestProgressReporterEnablesStatusOutputOnlyForTTY(t *testing.T) {
 func TestGatewayProgressMessagesSanitizeSecrets(t *testing.T) {
 	token := "sk-goodtoken1234567890"
 	rawBaseURL := "https://" + token + "@gateway.example.com/proxy/v1/models?api_key=" + token + "#fragment"
+	invalidBaseURL := "https://user:other-secret@gateway example.com"
 	display := displayOptions{HomeDir: "/home/ada", GOOS: "linux"}
 
 	rendered := gatewayModelListProgressMessage(rawBaseURL, token, display) + "\n" +
-		gatewayProbeProgressMessage(rawBaseURL, token, "claude-"+token, display)
+		gatewayProbeProgressMessage(rawBaseURL, token, "claude-"+token, display) + "\n" +
+		gatewayModelListProgressMessage(invalidBaseURL, token, display)
 
 	assertNotContains(t, rendered, token)
+	assertNotContains(t, rendered, "other-secret")
 	assertNotContains(t, rendered, rawBaseURL)
+	assertNotContains(t, rendered, invalidBaseURL)
 	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/models")
 	assertContains(t, rendered, "https://gateway.example.com/proxy/v1/chat/completions")
 	assertContains(t, rendered, "claude-sk-...7890")
+	assertContains(t, rendered, "Checking gateway model list for configured gateway URL.")
 }
 
 func TestAccessibleGatewayRetryAndRejectedPlanReturnToTargets(t *testing.T) {

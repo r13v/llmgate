@@ -200,9 +200,16 @@ func maskMaybeQuotedPreservingMasked(value string) string {
 
 func isMaskedValue(value string) bool {
 	return value == "***" ||
-		strings.HasPrefix(value, "***") ||
+		hasMaskedSuffix(value, "***") ||
 		value == "sk-[redacted]" ||
-		strings.HasPrefix(value, "sk-...")
+		hasMaskedSuffix(value, "sk-...")
+}
+
+func hasMaskedSuffix(value, prefix string) bool {
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	return len([]rune(value)) == len([]rune(prefix))+4
 }
 
 func lastRunes(value string, n int) string {

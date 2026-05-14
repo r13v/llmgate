@@ -67,7 +67,7 @@ func (p progressReporter) Run(message string, fn func() error) error {
 func gatewayModelListProgressMessage(baseURL, token string, display displayOptions) string {
 	modelURLs, err := gateway.NormalizeModelURLs(baseURL)
 	if err != nil {
-		return "Checking gateway model list for " + sanitizeText(baseURL, []string{token}, display) + "."
+		return "Checking gateway model list for configured gateway URL."
 	}
 	return fmt.Sprintf(
 		"Checking gateway model list: %s (fallback %s).",

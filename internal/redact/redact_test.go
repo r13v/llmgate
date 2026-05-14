@@ -87,6 +87,8 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 		`{"access_token":"json-access-token-1357"}`,
 		`{"token":"json-token-9753"}`,
 		"refresh_token: refresh-token-8642",
+		"bypass api_key=***real-secret-bypass",
+		"bypass token=sk-...secret-bypass",
 	}, "\n")
 
 	got := Text(input, Options{})
@@ -99,6 +101,8 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 		"json-access-token-1357",
 		"json-token-9753",
 		"refresh-token-8642",
+		"***real-secret-bypass",
+		"sk-...secret-bypass",
 	} {
 		if strings.Contains(got, notWant) {
 			t.Fatalf("redacted text leaked %q in:\n%s", notWant, got)
@@ -113,6 +117,8 @@ func TestTextRedactsGenericCredentialParameters(t *testing.T) {
 		`"access_token":"***1357"`,
 		`"token":"***9753"`,
 		"refresh_token: ***8642",
+		"api_key=***pass",
+		"token=sk-...pass",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("redacted text missing %q in:\n%s", want, got)

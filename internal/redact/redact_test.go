@@ -39,6 +39,7 @@ func TestTextRedactsSecretsAndTokenPatterns(t *testing.T) {
 		"known: " + known,
 		"Authorization: Bearer " + bearer,
 		"x-litellm-api-key: " + header,
+		`"x-litellm-api-key":"plain-litellm-key-1122"`,
 		"ANTHROPIC_AUTH_TOKEN=" + assigned,
 		"ANTHROPIC_AUTH_TOKEN: " + colonAssigned,
 		`"ANTHROPIC_AUTH_TOKEN": "` + jsonAssigned + `"`,
@@ -46,7 +47,7 @@ func TestTextRedactsSecretsAndTokenPatterns(t *testing.T) {
 	}, "\n")
 
 	got := Text(input, Options{KnownSecrets: []string{known}})
-	for _, notWant := range []string{known, bearer, header, assigned, colonAssigned, jsonAssigned} {
+	for _, notWant := range []string{known, bearer, header, "plain-litellm-key-1122", assigned, colonAssigned, jsonAssigned} {
 		if strings.Contains(got, notWant) {
 			t.Fatalf("redacted text leaked %q in:\n%s", notWant, got)
 		}
@@ -55,6 +56,7 @@ func TestTextRedactsSecretsAndTokenPatterns(t *testing.T) {
 		"known: ***9876",
 		"Authorization: Bearer ***1234",
 		"x-litellm-api-key: sk-...7890",
+		`"x-litellm-api-key":"***1122"`,
 		"ANTHROPIC_AUTH_TOKEN=***2468",
 		"ANTHROPIC_AUTH_TOKEN: ***1357",
 		`"ANTHROPIC_AUTH_TOKEN": "***8642"`,

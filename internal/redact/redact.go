@@ -13,7 +13,7 @@ const shortSecretMaxLength = 8
 
 var (
 	bearerPattern           = regexp.MustCompile(`(?i)\b(Bearer\s+)([^\s"',;]+)`)
-	litellmAPIKeyPattern    = regexp.MustCompile(`(?im)\b(x-litellm-api-key\s*:\s*)([^\s"',;]+)`)
+	litellmAPIKeyPattern    = regexp.MustCompile(`(?im)(["']?\bx-litellm-api-key\b["']?\s*:\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s"',;]+)`)
 	authTokenAssignPattern  = regexp.MustCompile(`(?im)\b(` + core.VarAnthropicAuthToken + `"?\s*(?:=|:)\s*)("[^"\r\n]*"|'[^'\r\n]*'|[^\s#,\r\n]+)`)
 	credentialQueryPattern  = regexp.MustCompile(`(?i)([?&;](?:api[_-]?key|access[_-]?token|refresh[_-]?token|token)=)([^&#\s"',;]+)`)
 	credentialAssignPattern = regexp.MustCompile(

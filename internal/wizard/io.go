@@ -137,7 +137,8 @@ func (p HuhPrompter) MultiSelect(ctx context.Context, prompt MultiSelectPrompt) 
 		Title(prompt.Title).
 		Description(prompt.Description).
 		Value(&selected).
-		Options(options...)
+		Options(options...).
+		Height(multiSelectPromptHeight(prompt))
 	if err := p.run(ctx, field); err != nil {
 		return nil, err
 	}
@@ -187,4 +188,18 @@ func selectOptions(values []string, knownSecrets []string, display displayOption
 
 func numberedValue(index int) string {
 	return fmt.Sprintf("%d", index)
+}
+
+func multiSelectPromptHeight(prompt MultiSelectPrompt) int {
+	height := len(prompt.Options)
+	if prompt.Title != "" {
+		height++
+	}
+	if prompt.Description != "" {
+		height += strings.Count(prompt.Description, "\n") + 2
+	}
+	if height < 1 {
+		return 1
+	}
+	return height
 }

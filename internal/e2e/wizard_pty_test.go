@@ -78,6 +78,43 @@ func TestXPTYPromptCancellationSmoke(t *testing.T) {
 	}
 }
 
+func TestXPTYMultiSelectRendersOptionsSmoke(t *testing.T) {
+	pty := newUnixPty(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := (wizard.HuhPrompter{
+			In:     pty.Slave(),
+			Output: pty.Slave(),
+		}).MultiSelect(ctx, wizard.MultiSelectPrompt{
+			Title:       "Select write targets",
+			Description: "Writable targets are selected by default. Manual targets are shown in the apply plan when relevant.",
+			Options: []wizard.Option{
+				{Label: "Claude Code user settings - ~/.claude/settings.json", Value: "0", Selected: true},
+				{Label: "terminal shell profile - ~/.zshrc", Value: "1", Selected: true},
+			},
+		})
+		done <- err
+	}()
+
+	waitForPTYOutput(t, pty, "Claude Code user settings")
+	if _, err := pty.Write([]byte("\r")); err != nil {
+		t.Fatalf("submit multiselect prompt: %v", err)
+	}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("MultiSelect() error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		_ = pty.Close()
+		t.Fatal("MultiSelect() did not submit")
+	}
+}
+
 func TestXPTYWizardStartupCancellationSmoke(t *testing.T) {
 	pty := newUnixPty(t)
 	h := newHarness(t)

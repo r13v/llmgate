@@ -757,15 +757,17 @@ func (r *fakeRelease) Close() {
 func powershellCommand(t *testing.T) (string, []string) {
 	t.Helper()
 
+	if runtime.GOOS != "windows" {
+		t.Skip("run.ps1 execution is exercised on Windows")
+	}
+
 	for _, name := range []string{"pwsh", "powershell"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			continue
 		}
 		args := []string{"-NoProfile", "-NonInteractive"}
-		if runtime.GOOS == "windows" {
-			args = append(args, "-ExecutionPolicy", "Bypass")
-		}
+		args = append(args, "-ExecutionPolicy", "Bypass")
 		args = append(args, "-File")
 		return path, args
 	}

@@ -50,9 +50,7 @@ function Resolve-RunArch {
 	}
 }
 
-function Resolve-CacheDir {
-	param([Parameter(Mandatory = $true)][string]$ArchName)
-
+function Resolve-LocalAppData {
 	$localAppData = $env:LOCALAPPDATA
 	if (-not $localAppData) {
 		$localAppData = [Environment]::GetFolderPath("LocalApplicationData")
@@ -60,8 +58,7 @@ function Resolve-CacheDir {
 	if (-not $localAppData) {
 		throw "LOCALAPPDATA is required"
 	}
-
-	return Join-Path (Join-Path (Join-Path (Join-Path $localAppData "llmgate") "cache") $script:Channel) "windows-$ArchName"
+	return $localAppData
 }
 
 function Download-File {
@@ -90,18 +87,6 @@ function Test-Sha256Hex {
 	return $Value -match "^[A-Fa-f0-9]{64}$"
 }
 
-function Read-FirstWord {
-	param([Parameter(Mandatory = $true)][string]$Path)
-	if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-		return $null
-	}
-	$line = Get-Content -LiteralPath $Path -TotalCount 1
-	if (-not $line) {
-		return $null
-	}
-	return ($line -split "\s+")[0]
-}
-
 function Find-ExpectedChecksum {
 	param(
 		[Parameter(Mandatory = $true)][string]$ChecksumsPath,
@@ -117,70 +102,102 @@ function Find-ExpectedChecksum {
 	return $null
 }
 
-function Read-CurrentSha {
-	return Read-FirstWord -Path $script:CurrentPath
+function Read-InstallMetadata {
+	if (-not (Test-Path -LiteralPath $script:MetadataPath -PathType Leaf)) {
+		return $null
+	}
+	try {
+		return Get-Content -LiteralPath $script:MetadataPath -Raw | ConvertFrom-Json
+	} catch {
+		return $null
+	}
 }
 
-function Test-CacheEntry {
-	param([string]$ArchiveSha)
-
-	if (-not (Test-Sha256Hex -Value $ArchiveSha)) {
+function Test-InstalledCommand {
+	if (-not (Test-Path -LiteralPath $script:InstallPath -PathType Leaf)) {
+		return $false
+	}
+	try {
+		$item = Get-Item -LiteralPath $script:InstallPath -Force
+		if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+			return $false
+		}
+	} catch {
 		return $false
 	}
 
-	$entryDir = Join-Path $script:CacheDir $ArchiveSha
-	$binaryPath = Join-Path $entryDir "llmgate.exe"
-	$archiveShaPath = Join-Path $entryDir "archive.sha256"
-	$binaryShaPath = Join-Path $entryDir "binary.sha256"
-
-	if (-not (Test-Path -LiteralPath $binaryPath -PathType Leaf)) {
+	$metadata = Read-InstallMetadata
+	if (-not $metadata) {
 		return $false
 	}
-	if (-not (Test-Path -LiteralPath $archiveShaPath -PathType Leaf)) {
+	if ("$($metadata.product)" -ne "llmgate") {
 		return $false
 	}
-	if (-not (Test-Path -LiteralPath $binaryShaPath -PathType Leaf)) {
+	if ("$($metadata.channel)" -ne $script:Channel) {
 		return $false
 	}
-
-	$storedArchiveSha = Read-FirstWord -Path $archiveShaPath
-	if ($storedArchiveSha -ne $ArchiveSha) {
+	if ("$($metadata.install_path)" -ne $script:InstallPath) {
 		return $false
 	}
-
-	$expectedBinarySha = Read-FirstWord -Path $binaryShaPath
+	$expectedBinarySha = "$($metadata.binary_sha256)"
 	if (-not (Test-Sha256Hex -Value $expectedBinarySha)) {
 		return $false
 	}
-
-	$actualBinarySha = Get-Sha256 -Path $binaryPath
-	return $actualBinarySha -eq $expectedBinarySha
+	$actualBinarySha = Get-Sha256 -Path $script:InstallPath
+	return $actualBinarySha -eq $expectedBinarySha.ToLowerInvariant()
 }
 
-function Test-CurrentCache {
-	$currentSha = Read-CurrentSha
-	return (Test-CacheEntry -ArchiveSha $currentSha)
+function Test-InstallPathReplaceable {
+	try {
+		$item = Get-Item -LiteralPath $script:InstallPath -Force -ErrorAction SilentlyContinue
+		if ($item) {
+			if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+				return $false
+			}
+			return Test-InstalledCommand
+		}
+	} catch {
+		return $false
+	}
+	return $true
 }
 
-function Invoke-CacheEntry {
-	param([Parameter(Mandatory = $true)][string]$ArchiveSha)
+function Get-InstalledArchiveSha {
+	$metadata = Read-InstallMetadata
+	if (-not $metadata) {
+		return $null
+	}
+	return "$($metadata.archive_sha256)"
+}
 
-	$binaryPath = Join-Path (Join-Path $script:CacheDir $ArchiveSha) "llmgate.exe"
+function Write-PathHint {
+	$pathParts = @()
+	if ($env:Path) {
+		$pathParts = @($env:Path -split [IO.Path]::PathSeparator)
+	}
+	if ($pathParts -contains $script:InstallDir) {
+		return
+	}
+	Write-Status "llmgate installed at $script:InstallPath"
+	Write-Status "Add $script:InstallDir to PATH to run llmgate directly."
+}
+
+function Invoke-InstalledCommand {
 	Remove-TempDir
+	Write-PathHint
 	$appArgs = $script:AppArgs
-	& $binaryPath @appArgs
+	& $script:InstallPath @appArgs
 	exit $LASTEXITCODE
 }
 
-function Invoke-CurrentCacheWithStatus {
+function Invoke-InstalledWithStatus {
 	param([string]$Message)
 
-	$currentSha = Read-CurrentSha
-	if (Test-CacheEntry -ArchiveSha $currentSha) {
+	if (Test-InstalledCommand) {
 		if ($Message) {
 			Write-Status $Message
 		}
-		Invoke-CacheEntry -ArchiveSha $currentSha
+		Invoke-InstalledCommand
 	}
 }
 
@@ -197,44 +214,57 @@ function Enter-UpdateLock {
 	return $false
 }
 
-function Enable-ExecutableWhenNeeded {
-	param([Parameter(Mandatory = $true)][string]$Path)
+function Write-InstallMetadata {
+	param(
+		[Parameter(Mandatory = $true)][string]$ArchiveSha,
+		[Parameter(Mandatory = $true)][string]$BinarySha
+	)
 
-	try {
-		if (-not [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([System.Runtime.InteropServices.OSPlatform]::Windows)) {
-			$chmod = Get-Command chmod -ErrorAction SilentlyContinue
-			if ($chmod) {
-				& $chmod 0755 $Path
-			}
-		}
-	} catch {
+	$metadata = [ordered]@{
+		schema_version = 1
+		product = "llmgate"
+		channel = $script:Channel
+		install_path = $script:InstallPath
+		archive_name = $script:ArchiveName
+		archive_sha256 = $ArchiveSha
+		binary_sha256 = $BinarySha
+		installed_at = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")
 	}
+	$json = ($metadata | ConvertTo-Json -Depth 2)
+	$tmp = Join-Path $script:StateDir "install.json.$PID"
+	$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+	[IO.File]::WriteAllText($tmp, $json + [Environment]::NewLine, $utf8NoBom)
+	Move-Item -LiteralPath $tmp -Destination $script:MetadataPath -Force
 }
 
-function Update-Cache {
+function Install-OrUpdate {
 	param([Parameter(Mandatory = $true)][string]$ExpectedArchiveSha)
 
 	$script:UpdateError = "unknown update error"
+	if (-not (Test-InstallPathReplaceable)) {
+		$script:UpdateError = "canonical install path is not owned by llmgate: $script:InstallPath"
+		return $false
+	}
+
 	$archivePath = Join-Path $script:TempDir $script:ArchiveName
 	$extractDir = Join-Path $script:TempDir "extract"
-	$stageDir = Join-Path $script:CacheDir ".stage-$ExpectedArchiveSha-$PID"
-	$entryDir = Join-Path $script:CacheDir $ExpectedArchiveSha
+	$stageBinary = Join-Path $script:InstallDir ".llmgate.$PID.exe"
 
-	Remove-Item -LiteralPath $extractDir, $stageDir -Recurse -Force -ErrorAction SilentlyContinue
-	New-Item -ItemType Directory -Path $extractDir, $stageDir -Force | Out-Null
+	Remove-Item -LiteralPath $extractDir, $stageBinary -Recurse -Force -ErrorAction SilentlyContinue
+	New-Item -ItemType Directory -Path $extractDir, $script:InstallDir, $script:StateDir -Force | Out-Null
 
 	try {
 		Download-File -Uri "$script:ReleaseUrl/$script:ArchiveName" -OutFile $archivePath
 	} catch {
 		$script:UpdateError = "could not download $script:ArchiveName"
-		Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+		Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
 		return $false
 	}
 
 	$actualArchiveSha = Get-Sha256 -Path $archivePath
 	if ($actualArchiveSha -ne $ExpectedArchiveSha) {
 		$script:UpdateError = "checksum mismatch for $script:ArchiveName"
-		Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+		Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
 		return $false
 	}
 
@@ -242,36 +272,31 @@ function Update-Cache {
 		Expand-Archive -LiteralPath $archivePath -DestinationPath $extractDir -Force
 	} catch {
 		$script:UpdateError = "could not unpack $script:ArchiveName"
-		Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+		Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
 		return $false
 	}
 
 	$extractedBinary = Join-Path $extractDir "llmgate.exe"
 	if (-not (Test-Path -LiteralPath $extractedBinary -PathType Leaf)) {
 		$script:UpdateError = "archive did not contain llmgate.exe"
-		Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+		Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
 		return $false
 	}
 
-	Enable-ExecutableWhenNeeded -Path $extractedBinary
-	$binarySha = Get-Sha256 -Path $extractedBinary
-
 	try {
-		Copy-Item -LiteralPath $extractedBinary -Destination (Join-Path $stageDir "llmgate.exe") -Force
-		Enable-ExecutableWhenNeeded -Path (Join-Path $stageDir "llmgate.exe")
-		Set-Content -LiteralPath (Join-Path $stageDir "archive.sha256") -Value "$ExpectedArchiveSha  $script:ArchiveName" -Encoding ASCII
-		Set-Content -LiteralPath (Join-Path $stageDir "binary.sha256") -Value "$binarySha  llmgate.exe" -Encoding ASCII
-
-		Remove-Item -LiteralPath $entryDir -Recurse -Force -ErrorAction SilentlyContinue
-		Move-Item -LiteralPath $stageDir -Destination $entryDir
-
-		$currentTmp = Join-Path $script:CacheDir ".current.$PID"
-		Set-Content -LiteralPath $currentTmp -Value $ExpectedArchiveSha -Encoding ASCII
-		Move-Item -LiteralPath $currentTmp -Destination $script:CurrentPath -Force
+		Copy-Item -LiteralPath $extractedBinary -Destination $stageBinary -Force
+		$binarySha = Get-Sha256 -Path $stageBinary
+		if (-not (Test-InstallPathReplaceable)) {
+			$script:UpdateError = "canonical install path changed before replacement: $script:InstallPath"
+			Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
+			return $false
+		}
+		Move-Item -LiteralPath $stageBinary -Destination $script:InstallPath -Force
+		Write-InstallMetadata -ArchiveSha $ExpectedArchiveSha -BinarySha $binarySha
 		return $true
 	} catch {
-		$script:UpdateError = "could not replace cache entry"
-		Remove-Item -LiteralPath $stageDir -Recurse -Force -ErrorAction SilentlyContinue
+		$script:UpdateError = "could not replace installed llmgate"
+		Remove-Item -LiteralPath $stageBinary -Force -ErrorAction SilentlyContinue
 		return $false
 	}
 }
@@ -283,12 +308,15 @@ try {
 	}
 
 	$archName = Resolve-RunArch
+	$localAppData = Resolve-LocalAppData
 	$script:ArchiveName = "$PackagePrefix-windows-$archName.zip"
-	$script:CacheDir = Resolve-CacheDir -ArchName $archName
-	$script:CurrentPath = Join-Path $script:CacheDir "current"
-	$script:LockDir = Join-Path $script:CacheDir ".lock"
+	$script:InstallDir = Join-Path (Join-Path $localAppData "Programs") "llmgate"
+	$script:InstallPath = Join-Path $script:InstallDir "llmgate.exe"
+	$script:StateDir = Join-Path $localAppData "llmgate"
+	$script:MetadataPath = Join-Path $script:StateDir "install.json"
+	$script:LockDir = Join-Path $script:StateDir ".lock"
 
-	New-Item -ItemType Directory -Force -Path $script:CacheDir | Out-Null
+	New-Item -ItemType Directory -Force -Path $script:StateDir | Out-Null
 
 	$script:TempDir = Join-Path ([IO.Path]::GetTempPath()) ([IO.Path]::GetRandomFileName())
 	New-Item -ItemType Directory -Path $script:TempDir | Out-Null
@@ -297,51 +325,51 @@ try {
 	try {
 		Download-File -Uri "$ReleaseUrl/checksums.txt" -OutFile $checksumsPath
 	} catch {
-		Invoke-CurrentCacheWithStatus -Message "Could not check for updates; running cached llmgate."
-		Fail-Run "could not check for updates and no valid cached llmgate is available"
+		Invoke-InstalledWithStatus -Message "Could not check for updates; running installed llmgate."
+		Fail-Run "could not check for updates and no valid installed llmgate is available"
 	}
 
 	$expectedArchiveSha = Find-ExpectedChecksum -ChecksumsPath $checksumsPath -ArchiveName $script:ArchiveName
 	if (-not (Test-Sha256Hex -Value $expectedArchiveSha)) {
-		Invoke-CurrentCacheWithStatus -Message "Could not verify latest release; running cached llmgate."
+		Invoke-InstalledWithStatus -Message "Could not verify latest release; running installed llmgate."
 		Fail-Run "checksum entry not found for $script:ArchiveName"
 	}
 
-	$currentSha = Read-CurrentSha
-	if ($currentSha -eq $expectedArchiveSha -and (Test-CacheEntry -ArchiveSha $currentSha)) {
-		Invoke-CacheEntry -ArchiveSha $currentSha
+	$currentArchiveSha = Get-InstalledArchiveSha
+	if ($currentArchiveSha -eq $expectedArchiveSha -and (Test-InstalledCommand)) {
+		Invoke-InstalledCommand
 	}
 
 	if (-not (Enter-UpdateLock)) {
-		Invoke-CurrentCacheWithStatus -Message "Could not acquire update lock; running cached llmgate."
-		Fail-Run "could not acquire update lock and no valid cached llmgate is available"
+		Invoke-InstalledWithStatus -Message "Could not acquire update lock; running installed llmgate."
+		Fail-Run "could not acquire update lock and no valid installed llmgate is available"
 	}
 
-	$currentSha = Read-CurrentSha
-	if ($currentSha -eq $expectedArchiveSha -and (Test-CacheEntry -ArchiveSha $currentSha)) {
+	$currentArchiveSha = Get-InstalledArchiveSha
+	if ($currentArchiveSha -eq $expectedArchiveSha -and (Test-InstalledCommand)) {
 		Release-UpdateLock
-		Invoke-CacheEntry -ArchiveSha $currentSha
+		Invoke-InstalledCommand
 	}
 
-	if (Test-CurrentCache) {
+	if (Test-InstalledCommand) {
 		Write-Status "Updating llmgate..."
 	} else {
 		Write-Status "Downloading llmgate..."
 	}
 
-	if (-not (Update-Cache -ExpectedArchiveSha $expectedArchiveSha)) {
+	if (-not (Install-OrUpdate -ExpectedArchiveSha $expectedArchiveSha)) {
 		Release-UpdateLock
-		Invoke-CurrentCacheWithStatus -Message "Could not update llmgate; running cached llmgate."
+		Invoke-InstalledWithStatus -Message "Could not update llmgate; running installed llmgate."
 		Fail-Run "could not update llmgate: $script:UpdateError"
 	}
 
 	Release-UpdateLock
 
-	if (Test-CacheEntry -ArchiveSha $expectedArchiveSha) {
-		Invoke-CacheEntry -ArchiveSha $expectedArchiveSha
+	if (Test-InstalledCommand) {
+		Invoke-InstalledCommand
 	}
 
-	Fail-Run "updated cache entry could not be verified"
+	Fail-Run "installed llmgate could not be verified"
 } catch {
 	Release-UpdateLock
 	Remove-TempDir

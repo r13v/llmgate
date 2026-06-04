@@ -6,7 +6,7 @@ This document describes the `llmgate` product contract without depending on any 
 
 A coding agent should be able to implement an equivalent project on any technology stack from this specification. Command names, file paths, environment variable names, HTTP endpoints, and external product names are part of the product behavior, not recommendations for implementation technology.
 
-This specification intentionally covers only the no-argument interactive setup wizard. Other command-line modes, subcommands, flags, package metadata, release automation, and implementation-specific developer tooling are outside this document and are not acceptance requirements.
+This specification intentionally covers the no-argument interactive setup wizard and the public user-local install/update contract. Other command-line modes, package metadata, release automation, and implementation-specific developer tooling are outside this document and are not acceptance requirements.
 
 ## Product Summary
 
@@ -14,6 +14,7 @@ This specification intentionally covers only the no-argument interactive setup w
 
 The CLI must:
 
+- install and update as a user-local command without administrator privileges;
 - safely explain which local sources will be read;
 - inspect the current Claude Code configuration;
 - discover existing gateway, token, and model values;
@@ -49,6 +50,10 @@ The CLI must:
 - IDE settings: VS Code or Cursor user settings, if their config directories already exist.
 - Write target: a location where the CLI can apply settings.
 - Apply plan: a previewed, user-confirmed write plan.
+- One-line run: a copy/paste shell or PowerShell invocation that obtains the latest rolling `main` build, installs or updates the user-local command, and starts `llmgate`.
+- Installed command: the user-local `llmgate` executable managed by the one-line run and update command.
+- Install metadata: user-local state that records `llmgate` ownership of the installed command.
+- Update command: `llmgate update`, which refreshes the installed command without starting the setup wizard.
 
 ## Public CLI Interface
 
@@ -63,15 +68,36 @@ Requirements:
 - the wizard must not read configuration before startup disclosure approval;
 - the wizard must not write configuration before apply plan approval.
 
-### Argument-bearing invocations
+### Update invocation
 
-No argument-bearing invocation is required by this specification.
+Running `llmgate update` updates the installed command from the rolling `main` build without starting the interactive setup wizard.
 
 Requirements:
 
 - the no-argument setup wizard must be fully usable without relying on any other command;
-- this document does not require or forbid extra subcommands or flags;
+- `llmgate update` must only self-update when the running executable is the canonical installed command;
+- `llmgate update` must fail without changing files when install metadata is missing, invalid, or does not match the installed command's current hash;
+- `llmgate update` must return success when the installed command is already up to date;
+- `llmgate update` must return a usage error for non-canonical invocations and a runtime error for network, checksum, archive, or replacement failures;
+- `llmgate update` must not start the setup wizard;
 - any implementation-specific extra command that prints errors should still redact secrets.
+
+### One-line run
+
+The public one-line shell and PowerShell commands install or update the user-local command and then start `llmgate`.
+
+Requirements:
+
+- Unix install path: `$HOME/.local/bin/llmgate`;
+- Windows install path: `%LOCALAPPDATA%\Programs\llmgate\llmgate.exe`;
+- Unix install metadata path: `${XDG_STATE_HOME:-$HOME/.local/state}/llmgate/install.json`;
+- Windows install metadata path: `%LOCALAPPDATA%\llmgate\install.json`;
+- one-line run must verify the release archive digest against `checksums.txt` before installing it;
+- one-line run must not use administrator privileges;
+- one-line run must not automatically edit shell profiles or User `PATH`;
+- if the install directory is not in `PATH`, one-line run must print a manual PATH setup hint;
+- if update checking or update download fails but a valid installed command already exists, one-line run may warn and run the installed command;
+- one-line run must not overwrite a symlink or a file that is not owned by `llmgate` through valid install metadata.
 
 ## Startup disclosure
 
@@ -1107,7 +1133,8 @@ An implementation is behaviorally equivalent when these scenarios pass on suppor
 
 - Running `llmgate` in an interactive terminal starts setup wizard.
 - Running `llmgate` in a non-interactive terminal fails with a clear message.
-- Argument-bearing invocations are outside this specification and have no acceptance requirement here.
+- Running `llmgate update` from the canonical installed command updates that command or reports that it is already up to date without starting the setup wizard.
+- Running `llmgate update` from a non-canonical executable fails with a usage error.
 - Error messages redact token-like text.
 
 ### Privacy scenarios

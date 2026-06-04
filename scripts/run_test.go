@@ -24,7 +24,7 @@ import (
 	"github.com/charmbracelet/x/xpty"
 )
 
-func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
+func TestRunSHDownloadsInstallsAndForwardsArgs(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run.sh is exercised on Unix-like platforms")
 	}
@@ -39,9 +39,9 @@ func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
 		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
-	cacheDir := filepath.Join(t.TempDir(), "cache")
+	homeDir := filepath.Join(t.TempDir(), "home")
 
-	output, err := runSH(t, scriptPath, cacheDir, "--version", "extra")
+	output, err := runSH(t, scriptPath, homeDir, "--version", "extra")
 	if err != nil {
 		t.Fatalf("run.sh failed: %v\n%s", err, output)
 	}
@@ -49,6 +49,8 @@ func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
 	got := string(output)
 	for _, want := range []string{
 		"Downloading llmgate...",
+		"llmgate installed at " + unixInstallPath(homeDir),
+		"Add " + unixInstallDir(homeDir) + " to PATH to run llmgate directly.",
 		"fake v1 args=--version,extra",
 	} {
 		if !strings.Contains(got, want) {
@@ -62,6 +64,8 @@ func TestRunSHDownloadsCachesAndForwardsArgs(t *testing.T) {
 	if release.Count(archiveName) != 1 {
 		t.Fatalf("%s downloads = %d, want 1", archiveName, release.Count(archiveName))
 	}
+	assertFileExists(t, unixInstallPath(homeDir))
+	assertFileExists(t, unixMetadataPath(homeDir))
 }
 
 func TestRunSHReopensTTYForPipedNoArgWizard(t *testing.T) {
@@ -86,9 +90,9 @@ exit 31
 		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
-	cacheDir := filepath.Join(t.TempDir(), "cache")
+	homeDir := filepath.Join(t.TempDir(), "home")
 
-	output, err := runSHFromPipedScriptWithPTY(t, scriptPath, cacheDir)
+	output, err := runSHFromPipedScriptWithPTY(t, scriptPath, homeDir)
 	if err != nil {
 		t.Fatalf("run.sh failed: %v\n%s", err, output)
 	}
@@ -102,7 +106,7 @@ exit 31
 	}
 }
 
-func TestRunSHCacheHitSkipsArchiveDownload(t *testing.T) {
+func TestRunSHInstalledCurrentSkipsArchiveDownload(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run.sh is exercised on Unix-like platforms")
 	}
@@ -117,22 +121,22 @@ func TestRunSHCacheHitSkipsArchiveDownload(t *testing.T) {
 		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
-	cacheDir := filepath.Join(t.TempDir(), "cache")
+	homeDir := filepath.Join(t.TempDir(), "home")
 
-	if output, err := runSH(t, scriptPath, cacheDir); err != nil {
+	if output, err := runSH(t, scriptPath, homeDir); err != nil {
 		t.Fatalf("first run.sh failed: %v\n%s", err, output)
 	}
 
-	output, err := runSH(t, scriptPath, cacheDir, "again")
+	output, err := runSH(t, scriptPath, homeDir, "again")
 	if err != nil {
 		t.Fatalf("second run.sh failed: %v\n%s", err, output)
 	}
 	got := string(output)
 	if strings.Contains(got, "Downloading llmgate") || strings.Contains(got, "Updating llmgate") {
-		t.Fatalf("cache hit should be quiet before app output:\n%s", got)
+		t.Fatalf("current install should not download before app output:\n%s", got)
 	}
 	if !strings.Contains(got, "fake v1 args=again") {
-		t.Fatalf("cache hit did not run cached app with args:\n%s", got)
+		t.Fatalf("current install did not run app with args:\n%s", got)
 	}
 	if release.Count("checksums.txt") != 2 {
 		t.Fatalf("checksums.txt downloads = %d, want 2", release.Count("checksums.txt"))
@@ -142,7 +146,7 @@ func TestRunSHCacheHitSkipsArchiveDownload(t *testing.T) {
 	}
 }
 
-func TestRunSHRejectsChecksumMismatchWithoutCache(t *testing.T) {
+func TestRunSHRejectsChecksumMismatchWithoutInstall(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run.sh is exercised on Unix-like platforms")
 	}
@@ -160,7 +164,7 @@ func TestRunSHRejectsChecksumMismatchWithoutCache(t *testing.T) {
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
 
-	output, err := runSH(t, scriptPath, filepath.Join(t.TempDir(), "cache"))
+	output, err := runSH(t, scriptPath, filepath.Join(t.TempDir(), "home"))
 	if err == nil {
 		t.Fatalf("run.sh succeeded with a bad checksum:\n%s", output)
 	}
@@ -173,7 +177,50 @@ func TestRunSHRejectsChecksumMismatchWithoutCache(t *testing.T) {
 	}
 }
 
-func TestRunSHFallsBackToValidCacheWhenUpdateCheckFails(t *testing.T) {
+func TestRunSHRefusesUnownedInstallPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("run.sh is exercised on Unix-like platforms")
+	}
+	requireAnyTool(t, "sh")
+	requireAnyTool(t, "tar")
+	requireAnyTool(t, "curl", "wget")
+
+	archiveName := unixArchiveName(t)
+	archiveData := tarGzWithFile(t, "llmgate", 0o755, fakeBinary(t, "owned", 0))
+	release := newFakeRelease(t, map[string][]byte{
+		archiveName:     archiveData,
+		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
+	})
+	scriptPath := patchedRunScript(t, "run.sh", release.URL())
+	homeDir := filepath.Join(t.TempDir(), "home")
+	if err := os.MkdirAll(unixInstallDir(homeDir), 0o755); err != nil {
+		t.Fatalf("create install dir: %v", err)
+	}
+	if err := os.WriteFile(unixInstallPath(homeDir), []byte("foreign"), 0o755); err != nil {
+		t.Fatalf("write foreign install: %v", err)
+	}
+
+	output, err := runSH(t, scriptPath, homeDir)
+	if err == nil {
+		t.Fatalf("run.sh overwrote unowned install path:\n%s", output)
+	}
+	got := string(output)
+	if !strings.Contains(got, "canonical install path is not owned by llmgate") {
+		t.Fatalf("run.sh unowned output missing ownership error:\n%s", got)
+	}
+	if release.Count(archiveName) != 0 {
+		t.Fatalf("%s downloads = %d, want 0", archiveName, release.Count(archiveName))
+	}
+	data, err := os.ReadFile(unixInstallPath(homeDir))
+	if err != nil {
+		t.Fatalf("read foreign install: %v", err)
+	}
+	if string(data) != "foreign" {
+		t.Fatalf("foreign install changed to %q", data)
+	}
+}
+
+func TestRunSHFallsBackToValidInstallWhenUpdateCheckFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run.sh is exercised on Unix-like platforms")
 	}
@@ -188,20 +235,20 @@ func TestRunSHFallsBackToValidCacheWhenUpdateCheckFails(t *testing.T) {
 		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
-	cacheDir := filepath.Join(t.TempDir(), "cache")
+	homeDir := filepath.Join(t.TempDir(), "home")
 
-	if output, err := runSH(t, scriptPath, cacheDir); err != nil {
+	if output, err := runSH(t, scriptPath, homeDir); err != nil {
 		t.Fatalf("first run.sh failed: %v\n%s", err, output)
 	}
 	release.Close()
 
-	output, err := runSH(t, scriptPath, cacheDir, "offline")
+	output, err := runSH(t, scriptPath, homeDir, "offline")
 	if err != nil {
-		t.Fatalf("run.sh did not fall back to cache: %v\n%s", err, output)
+		t.Fatalf("run.sh did not fall back to install: %v\n%s", err, output)
 	}
 	got := string(output)
 	for _, want := range []string{
-		"Could not check for updates; running cached llmgate.",
+		"Could not check for updates; running installed llmgate.",
 		"fake v1 args=offline",
 	} {
 		if !strings.Contains(got, want) {
@@ -210,7 +257,7 @@ func TestRunSHFallsBackToValidCacheWhenUpdateCheckFails(t *testing.T) {
 	}
 }
 
-func TestRunSHFallsBackToValidCacheWhenUpdateDownloadFails(t *testing.T) {
+func TestRunSHFallsBackToValidInstallWhenUpdateDownloadFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("run.sh is exercised on Unix-like platforms")
 	}
@@ -226,9 +273,9 @@ func TestRunSHFallsBackToValidCacheWhenUpdateDownloadFails(t *testing.T) {
 		"checksums.txt": []byte(checksumLine(archiveName, v1ArchiveData)),
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
-	cacheDir := filepath.Join(t.TempDir(), "cache")
+	homeDir := filepath.Join(t.TempDir(), "home")
 
-	if output, err := runSH(t, scriptPath, cacheDir); err != nil {
+	if output, err := runSH(t, scriptPath, homeDir); err != nil {
 		t.Fatalf("first run.sh failed: %v\n%s", err, output)
 	}
 
@@ -236,14 +283,14 @@ func TestRunSHFallsBackToValidCacheWhenUpdateDownloadFails(t *testing.T) {
 		"checksums.txt": []byte(checksumLine(archiveName, v2ArchiveData)),
 	})
 
-	output, err := runSH(t, scriptPath, cacheDir, "stale-ok")
+	output, err := runSH(t, scriptPath, homeDir, "stale-ok")
 	if err != nil {
 		t.Fatalf("run.sh did not fall back after update failure: %v\n%s", err, output)
 	}
 	got := string(output)
 	for _, want := range []string{
 		"Updating llmgate...",
-		"Could not update llmgate; running cached llmgate.",
+		"Could not update llmgate; running installed llmgate.",
 		"fake v1 args=stale-ok",
 	} {
 		if !strings.Contains(got, want) {
@@ -268,7 +315,7 @@ func TestRunSHPreservesAppExitCode(t *testing.T) {
 	})
 	scriptPath := patchedRunScript(t, "run.sh", release.URL())
 
-	output, err := runSH(t, scriptPath, filepath.Join(t.TempDir(), "cache"), "code")
+	output, err := runSH(t, scriptPath, filepath.Join(t.TempDir(), "home"), "code")
 	if err == nil {
 		t.Fatalf("run.sh succeeded despite app failure:\n%s", output)
 	}
@@ -278,7 +325,7 @@ func TestRunSHPreservesAppExitCode(t *testing.T) {
 	}
 }
 
-func TestRunPS1DownloadsCachesAndForwardsArgs(t *testing.T) {
+func TestRunPS1DownloadsInstallsAndForwardsArgs(t *testing.T) {
 	ps, psArgs := powershellCommand(t)
 
 	archiveName := windowsArchiveName(t)
@@ -298,15 +345,19 @@ func TestRunPS1DownloadsCachesAndForwardsArgs(t *testing.T) {
 	got := string(output)
 	for _, want := range []string{
 		"Downloading llmgate...",
+		"llmgate installed at " + windowsInstallPath(localAppData),
+		"Add " + windowsInstallDir(localAppData) + " to PATH to run llmgate directly.",
 		"fake ps-v1 args=--version",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("run.ps1 output missing %q in:\n%s", want, got)
 		}
 	}
+	assertFileExists(t, windowsInstallPath(localAppData))
+	assertFileExists(t, windowsMetadataPath(localAppData))
 }
 
-func TestRunPS1RejectsChecksumMismatchWithoutCache(t *testing.T) {
+func TestRunPS1RejectsChecksumMismatchWithoutInstall(t *testing.T) {
 	ps, psArgs := powershellCommand(t)
 
 	archiveName := windowsArchiveName(t)
@@ -332,7 +383,45 @@ func TestRunPS1RejectsChecksumMismatchWithoutCache(t *testing.T) {
 	}
 }
 
-func TestRunPS1FallsBackToValidCacheWhenUpdateCheckFails(t *testing.T) {
+func TestRunPS1RefusesUnownedInstallPath(t *testing.T) {
+	ps, psArgs := powershellCommand(t)
+
+	archiveName := windowsArchiveName(t)
+	archiveData := zipWithFile(t, "llmgate.exe", fakeBinary(t, "ps-owned", 0))
+	release := newFakeRelease(t, map[string][]byte{
+		archiveName:     archiveData,
+		"checksums.txt": []byte(checksumLine(archiveName, archiveData)),
+	})
+	scriptPath := patchedRunScript(t, "run.ps1", release.URL())
+	localAppData := filepath.Join(t.TempDir(), "LocalAppData")
+	if err := os.MkdirAll(windowsInstallDir(localAppData), 0o755); err != nil {
+		t.Fatalf("create install dir: %v", err)
+	}
+	if err := os.WriteFile(windowsInstallPath(localAppData), []byte("foreign"), 0o755); err != nil {
+		t.Fatalf("write foreign install: %v", err)
+	}
+
+	output, err := runPS1(t, ps, psArgs, scriptPath, localAppData)
+	if err == nil {
+		t.Fatalf("run.ps1 overwrote unowned install path:\n%s", output)
+	}
+	got := string(output)
+	if !strings.Contains(got, "canonical install path is not owned by llmgate") {
+		t.Fatalf("run.ps1 unowned output missing ownership error:\n%s", got)
+	}
+	if release.Count(archiveName) != 0 {
+		t.Fatalf("%s downloads = %d, want 0", archiveName, release.Count(archiveName))
+	}
+	data, err := os.ReadFile(windowsInstallPath(localAppData))
+	if err != nil {
+		t.Fatalf("read foreign install: %v", err)
+	}
+	if string(data) != "foreign" {
+		t.Fatalf("foreign install changed to %q", data)
+	}
+}
+
+func TestRunPS1FallsBackToValidInstallWhenUpdateCheckFails(t *testing.T) {
 	ps, psArgs := powershellCommand(t)
 
 	archiveName := windowsArchiveName(t)
@@ -351,11 +440,11 @@ func TestRunPS1FallsBackToValidCacheWhenUpdateCheckFails(t *testing.T) {
 
 	output, err := runPS1(t, ps, psArgs, scriptPath, localAppData, "offline")
 	if err != nil {
-		t.Fatalf("run.ps1 did not fall back to cache: %v\n%s", err, output)
+		t.Fatalf("run.ps1 did not fall back to install: %v\n%s", err, output)
 	}
 	got := string(output)
 	for _, want := range []string{
-		"Could not check for updates; running cached llmgate.",
+		"Could not check for updates; running installed llmgate.",
 		"fake ps-v1 args=offline",
 	} {
 		if !strings.Contains(got, want) {
@@ -385,19 +474,18 @@ func TestRunPS1PreservesAppExitCode(t *testing.T) {
 	}
 }
 
-func runSH(t *testing.T, scriptPath, cacheDir string, appArgs ...string) ([]byte, error) {
+func runSH(t *testing.T, scriptPath, homeDir string, appArgs ...string) ([]byte, error) {
 	t.Helper()
 
 	args := append([]string{scriptPath}, appArgs...)
 	cmd := exec.Command("sh", args...)
 	cmd.Env = testEnv(map[string]string{
-		"XDG_CACHE_HOME": cacheDir,
-		"HOME":           filepath.Join(t.TempDir(), "home"),
+		"HOME": homeDir,
 	})
 	return cmd.CombinedOutput()
 }
 
-func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, cacheDir string) ([]byte, error) {
+func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, homeDir string) ([]byte, error) {
 	t.Helper()
 
 	pty, err := xpty.NewUnixPty(80, 24)
@@ -410,8 +498,7 @@ func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, cacheDir string) ([]b
 
 	cmd := exec.Command("sh", "-c", `exec sh < "$1"`, "llmgate-run-test", scriptPath)
 	cmd.Env = testEnv(map[string]string{
-		"XDG_CACHE_HOME": cacheDir,
-		"HOME":           filepath.Join(t.TempDir(), "home"),
+		"HOME": homeDir,
 	})
 	cmd.SysProcAttr = pipedScriptSysProcAttr()
 
@@ -448,6 +535,41 @@ func runSHFromPipedScriptWithPTY(t *testing.T, scriptPath, cacheDir string) ([]b
 	case <-time.After(time.Second):
 	}
 	return output.Bytes(), waitErr
+}
+
+func unixInstallDir(homeDir string) string {
+	return filepath.Join(homeDir, ".local", "bin")
+}
+
+func unixInstallPath(homeDir string) string {
+	return filepath.Join(unixInstallDir(homeDir), "llmgate")
+}
+
+func unixMetadataPath(homeDir string) string {
+	return filepath.Join(homeDir, ".local", "state", "llmgate", "install.json")
+}
+
+func windowsInstallDir(localAppData string) string {
+	return filepath.Join(localAppData, "Programs", "llmgate")
+}
+
+func windowsInstallPath(localAppData string) string {
+	return filepath.Join(windowsInstallDir(localAppData), "llmgate.exe")
+}
+
+func windowsMetadataPath(localAppData string) string {
+	return filepath.Join(localAppData, "llmgate", "install.json")
+}
+
+func assertFileExists(t *testing.T, path string) {
+	t.Helper()
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("expected file %s to exist: %v", path, err)
+	}
+	if info.IsDir() {
+		t.Fatalf("expected file %s, got directory", path)
+	}
 }
 
 func runPS1(t *testing.T, ps string, psArgs []string, scriptPath, localAppData string, appArgs ...string) ([]byte, error) {

@@ -83,42 +83,55 @@ is_sha256_hex() {
 	[ "${#1}" -eq 64 ]
 }
 
-read_first_word() {
-	read_path="$1"
-	[ -f "$read_path" ] || return 1
-	awk 'NR == 1 {print $1; exit}' "$read_path"
+json_escape() {
+	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
-valid_cache_entry() {
-	entry_sha="$1"
-	is_sha256_hex "$entry_sha" || return 1
+metadata_value() {
+	metadata_key="$1"
+	[ -f "$metadata_path" ] || return 1
+	awk -v key="\"$metadata_key\"" '
+		index($0, key) {
+			sub(/^[^:]*:[[:space:]]*"/, "")
+			sub(/",[[:space:]]*$/, "")
+			sub(/"[[:space:]]*$/, "")
+			print
+			exit
+		}
+	' "$metadata_path"
+}
 
-	entry_dir="$cache_dir/$entry_sha"
-	entry_binary="$entry_dir/llmgate"
-	entry_archive_sha_path="$entry_dir/archive.sha256"
-	entry_binary_sha_path="$entry_dir/binary.sha256"
+valid_installed_command() {
+	[ ! -L "$install_path" ] || return 1
+	[ -f "$install_path" ] || return 1
+	[ -f "$metadata_path" ] || return 1
 
-	[ -f "$entry_binary" ] || return 1
-	[ -f "$entry_archive_sha_path" ] || return 1
-	[ -f "$entry_binary_sha_path" ] || return 1
+	metadata_product="$(metadata_value "product" || true)"
+	[ "$metadata_product" = "llmgate" ] || return 1
 
-	stored_archive_sha="$(read_first_word "$entry_archive_sha_path" || true)"
-	[ "$stored_archive_sha" = "$entry_sha" ] || return 1
+	metadata_channel="$(metadata_value "channel" || true)"
+	[ "$metadata_channel" = "$CHANNEL" ] || return 1
 
-	expected_binary_sha="$(read_first_word "$entry_binary_sha_path" || true)"
+	metadata_install_path="$(metadata_value "install_path" || true)"
+	[ "$metadata_install_path" = "$install_path" ] || return 1
+
+	expected_binary_sha="$(metadata_value "binary_sha256" || true)"
 	is_sha256_hex "$expected_binary_sha" || return 1
 
-	actual_binary_sha="$(sha256_file "$entry_binary")"
+	actual_binary_sha="$(sha256_file "$install_path")"
 	[ "$actual_binary_sha" = "$expected_binary_sha" ]
 }
 
-read_current_sha() {
-	read_first_word "$current_path"
+install_path_is_replaceable() {
+	[ ! -L "$install_path" ] || return 1
+	if [ ! -e "$install_path" ]; then
+		return 0
+	fi
+	valid_installed_command
 }
 
-current_cache_is_valid() {
-	current_sha="$(read_current_sha || true)"
-	valid_cache_entry "$current_sha"
+installed_archive_sha() {
+	metadata_value "archive_sha256"
 }
 
 can_reopen_tty_for_wizard() {
@@ -128,29 +141,34 @@ can_reopen_tty_for_wizard() {
 	( : </dev/tty ) 2>/dev/null
 }
 
-run_cached_entry() {
-	run_sha="$1"
-	shift
-	run_binary="$cache_dir/$run_sha/llmgate"
+print_path_hint() {
+	case ":${PATH:-}:" in
+		*":$install_dir:"*) return 0 ;;
+	esac
+	status "llmgate installed at $install_path"
+	status "Add $install_dir to PATH to run llmgate directly."
+}
+
+run_installed_command() {
 	if [ -n "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
 		TMP_DIR=""
 	fi
+	print_path_hint
 	if can_reopen_tty_for_wizard "$@"; then
-		exec "$run_binary" "$@" </dev/tty
+		exec "$install_path" "$@" </dev/tty
 	fi
-	exec "$run_binary" "$@"
+	exec "$install_path" "$@"
 }
 
-run_current_cache_with_status() {
+run_installed_with_status() {
 	message="$1"
 	shift
-	current_sha="$(read_current_sha || true)"
-	if valid_cache_entry "$current_sha"; then
+	if valid_installed_command; then
 		if [ -n "$message" ]; then
 			status "$message"
 		fi
-		run_cached_entry "$current_sha" "$@"
+		run_installed_command "$@"
 	fi
 	return 1
 }
@@ -175,7 +193,32 @@ release_update_lock() {
 	fi
 }
 
-update_cache() {
+write_metadata() {
+	write_archive_sha="$1"
+	write_binary_sha="$2"
+	metadata_tmp="$state_dir/install.json.$$"
+	installed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	escaped_install_path="$(json_escape "$install_path")"
+	escaped_archive_name="$(json_escape "$archive_name")"
+	{
+		printf '{\n'
+		printf '  "schema_version": 1,\n'
+		printf '  "product": "llmgate",\n'
+		printf '  "channel": "%s",\n' "$CHANNEL"
+		printf '  "install_path": "%s",\n' "$escaped_install_path"
+		printf '  "archive_name": "%s",\n' "$escaped_archive_name"
+		printf '  "archive_sha256": "%s",\n' "$write_archive_sha"
+		printf '  "binary_sha256": "%s",\n' "$write_binary_sha"
+		printf '  "installed_at": "%s"\n' "$installed_at"
+		printf '}\n'
+	} >"$metadata_tmp" || {
+		rm -f "$metadata_tmp"
+		return 1
+	}
+	mv "$metadata_tmp" "$metadata_path"
+}
+
+install_or_update() {
 	update_archive_sha="$1"
 	UPDATE_ERROR="unknown update error"
 
@@ -184,88 +227,75 @@ update_cache() {
 		return 1
 	fi
 
+	if ! install_path_is_replaceable; then
+		UPDATE_ERROR="canonical install path is not owned by llmgate: $install_path"
+		return 1
+	fi
+
 	archive_path="$TMP_DIR/$archive_name"
 	extract_dir="$TMP_DIR/extract"
-	stage_dir="$cache_dir/.stage-$update_archive_sha-$$"
-	entry_dir="$cache_dir/$update_archive_sha"
+	stage_binary="$install_dir/.llmgate.$$"
 
-	rm -rf "$extract_dir" "$stage_dir"
-	mkdir -p "$extract_dir" "$stage_dir" || {
-		UPDATE_ERROR="could not create temporary directories"
+	rm -rf "$extract_dir" "$stage_binary"
+	mkdir -p "$extract_dir" "$install_dir" "$state_dir" || {
+		UPDATE_ERROR="could not create install directories"
 		return 1
 	}
 
 	if ! download_file "$RELEASE_URL/$archive_name" "$archive_path"; then
 		UPDATE_ERROR="could not download $archive_name"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	fi
 
 	actual_archive_sha="$(sha256_file "$archive_path")"
 	if [ "$actual_archive_sha" != "$update_archive_sha" ]; then
 		UPDATE_ERROR="checksum mismatch for $archive_name"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	fi
 
 	if ! tar -xzf "$archive_path" -C "$extract_dir"; then
 		UPDATE_ERROR="could not unpack $archive_name"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	fi
 
 	extracted_binary="$extract_dir/llmgate"
 	if [ ! -f "$extracted_binary" ]; then
 		UPDATE_ERROR="archive did not contain llmgate"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	fi
 
-	chmod 0755 "$extracted_binary" || {
-		UPDATE_ERROR="could not mark llmgate executable"
-		rm -rf "$stage_dir"
-		return 1
-	}
-
-	binary_sha="$(sha256_file "$extracted_binary")"
-	cp "$extracted_binary" "$stage_dir/llmgate" || {
+	cp "$extracted_binary" "$stage_binary" || {
 		UPDATE_ERROR="could not stage llmgate"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	}
-	chmod 0755 "$stage_dir/llmgate" || {
+	chmod 0755 "$stage_binary" || {
 		UPDATE_ERROR="could not mark staged llmgate executable"
-		rm -rf "$stage_dir"
+		rm -f "$stage_binary"
 		return 1
 	}
-	printf '%s  %s\n' "$update_archive_sha" "$archive_name" >"$stage_dir/archive.sha256" || {
-		UPDATE_ERROR="could not write archive metadata"
-		rm -rf "$stage_dir"
+	binary_sha="$(sha256_file "$stage_binary")"
+
+	if ! install_path_is_replaceable; then
+		UPDATE_ERROR="canonical install path changed before replacement: $install_path"
+		rm -f "$stage_binary"
 		return 1
-	}
-	printf '%s  %s\n' "$binary_sha" "llmgate" >"$stage_dir/binary.sha256" || {
-		UPDATE_ERROR="could not write binary metadata"
-		rm -rf "$stage_dir"
+	fi
+
+	mv "$stage_binary" "$install_path" || {
+		UPDATE_ERROR="could not replace installed llmgate"
+		rm -f "$stage_binary"
 		return 1
 	}
 
-	rm -rf "$entry_dir"
-	mv "$stage_dir" "$entry_dir" || {
-		UPDATE_ERROR="could not replace cache entry"
-		rm -rf "$stage_dir"
+	if ! write_metadata "$update_archive_sha" "$binary_sha"; then
+		UPDATE_ERROR="could not write install metadata"
 		return 1
-	}
-
-	current_tmp="$cache_dir/.current.$$"
-	printf '%s\n' "$update_archive_sha" >"$current_tmp" || {
-		UPDATE_ERROR="could not write current cache pointer"
-		return 1
-	}
-	mv "$current_tmp" "$current_path" || {
-		UPDATE_ERROR="could not replace current cache pointer"
-		rm -f "$current_tmp"
-		return 1
-	}
+	fi
 
 	return 0
 }
@@ -274,66 +304,65 @@ os_name="$(resolve_os)"
 arch_name="$(resolve_arch)"
 archive_name="$PACKAGE_PREFIX-$os_name-$arch_name.tar.gz"
 
-cache_base="${XDG_CACHE_HOME:-}"
-if [ -z "$cache_base" ]; then
-	if [ -z "${HOME:-}" ]; then
-		die "HOME is required when XDG_CACHE_HOME is not set"
-	fi
-	cache_base="$HOME/.cache"
+if [ -z "${HOME:-}" ]; then
+	die "HOME is required"
 fi
 
-cache_dir="$cache_base/llmgate/$CHANNEL/$os_name-$arch_name"
-current_path="$cache_dir/current"
-lock_dir="$cache_dir/.lock"
+install_dir="$HOME/.local/bin"
+install_path="$install_dir/llmgate"
+state_base="${XDG_STATE_HOME:-$HOME/.local/state}"
+state_dir="$state_base/llmgate"
+metadata_path="$state_dir/install.json"
+lock_dir="$state_dir/.lock"
 
-mkdir -p "$cache_dir" || die "could not create cache directory: $cache_dir"
+mkdir -p "$state_dir" || die "could not create state directory: $state_dir"
 
 TMP_DIR="$(mktemp -d 2>/dev/null || mktemp -d -t llmgate)"
 checksums_path="$TMP_DIR/checksums.txt"
 
 if ! download_file "$RELEASE_URL/checksums.txt" "$checksums_path"; then
-	run_current_cache_with_status "Could not check for updates; running cached llmgate." "$@" || true
-	die "could not check for updates and no valid cached llmgate is available"
+	run_installed_with_status "Could not check for updates; running installed llmgate." "$@" || true
+	die "could not check for updates and no valid installed llmgate is available"
 fi
 
 expected_archive_sha="$(awk -v name="$archive_name" '$2 == name {print $1; exit}' "$checksums_path")"
 if ! is_sha256_hex "$expected_archive_sha"; then
-	run_current_cache_with_status "Could not verify latest release; running cached llmgate." "$@" || true
+	run_installed_with_status "Could not verify latest release; running installed llmgate." "$@" || true
 	die "checksum entry not found for $archive_name"
 fi
 
-current_sha="$(read_current_sha || true)"
-if [ "$current_sha" = "$expected_archive_sha" ] && valid_cache_entry "$current_sha"; then
-	run_cached_entry "$current_sha" "$@"
+current_archive_sha="$(installed_archive_sha || true)"
+if [ "$current_archive_sha" = "$expected_archive_sha" ] && valid_installed_command; then
+	run_installed_command "$@"
 fi
 
 if ! acquire_update_lock; then
-	run_current_cache_with_status "Could not acquire update lock; running cached llmgate." "$@" || true
-	die "could not acquire update lock and no valid cached llmgate is available"
+	run_installed_with_status "Could not acquire update lock; running installed llmgate." "$@" || true
+	die "could not acquire update lock and no valid installed llmgate is available"
 fi
 
-current_sha="$(read_current_sha || true)"
-if [ "$current_sha" = "$expected_archive_sha" ] && valid_cache_entry "$current_sha"; then
+current_archive_sha="$(installed_archive_sha || true)"
+if [ "$current_archive_sha" = "$expected_archive_sha" ] && valid_installed_command; then
 	release_update_lock
-	run_cached_entry "$current_sha" "$@"
+	run_installed_command "$@"
 fi
 
-if current_cache_is_valid; then
+if valid_installed_command; then
 	status "Updating llmgate..."
 else
 	status "Downloading llmgate..."
 fi
 
-if ! update_cache "$expected_archive_sha"; then
+if ! install_or_update "$expected_archive_sha"; then
 	release_update_lock
-	run_current_cache_with_status "Could not update llmgate; running cached llmgate." "$@" || true
+	run_installed_with_status "Could not update llmgate; running installed llmgate." "$@" || true
 	die "could not update llmgate: $UPDATE_ERROR"
 fi
 
 release_update_lock
 
-if valid_cache_entry "$expected_archive_sha"; then
-	run_cached_entry "$expected_archive_sha" "$@"
+if valid_installed_command; then
+	run_installed_command "$@"
 fi
 
-die "updated cache entry could not be verified"
+die "installed llmgate could not be verified"

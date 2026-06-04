@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/r13v/llmgate/internal/install"
 	"github.com/r13v/llmgate/internal/wizard"
 )
 
@@ -21,6 +22,9 @@ func TestRunHelp(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Usage:") {
 		t.Fatalf("help output missing usage:\n%s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "llmgate update") {
+		t.Fatalf("help output missing update command:\n%s", stdout.String())
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("help wrote stderr: %q", stderr.String())
@@ -114,6 +118,83 @@ func TestRunNoArgsPropagatesOtherWizardErrors(t *testing.T) {
 	}
 }
 
+func TestRunUpdateDispatchesUpdateCommand(t *testing.T) {
+	originalRunUpdate := runUpdateFn
+	runUpdateFn = func(stdout, stderr io.Writer) error {
+		_ = stderr
+		_, _ = stdout.Write([]byte("updated\n"))
+		return nil
+	}
+	defer func() {
+		runUpdateFn = originalRunUpdate
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"update"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("run returned %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if stdout.String() != "updated\n" {
+		t.Fatalf("update stdout = %q", stdout.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("update wrote stderr: %q", stderr.String())
+	}
+}
+
+func TestRunUpdateUsageErrorReturnsUsageExitCode(t *testing.T) {
+	originalRunUpdate := runUpdateFn
+	runUpdateFn = func(io.Writer, io.Writer) error {
+		return install.UsageError{Err: errors.New("run the one-line install command first")}
+	}
+	defer func() {
+		runUpdateFn = originalRunUpdate
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"update"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("run returned %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("usage update error wrote stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "one-line install") {
+		t.Fatalf("usage update error missing stderr: %q", stderr.String())
+	}
+}
+
+func TestRunUpdateFailureReturnsRuntimeExitCode(t *testing.T) {
+	originalRunUpdate := runUpdateFn
+	runUpdateFn = func(io.Writer, io.Writer) error {
+		return errors.New("network failed")
+	}
+	defer func() {
+		runUpdateFn = originalRunUpdate
+	}()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"update"}, &stdout, &stderr)
+
+	if code != 1 {
+		t.Fatalf("run returned %d, want 1", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("update failure wrote stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "network failed") {
+		t.Fatalf("update failure missing stderr: %q", stderr.String())
+	}
+}
+
 func TestRunUnknownFlag(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -128,6 +209,23 @@ func TestRunUnknownFlag(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "flag provided but not defined") {
 		t.Fatalf("unknown flag stderr missing parse error: %q", stderr.String())
+	}
+}
+
+func TestRunUpdateUnexpectedArgument(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"update", "now"}, &stdout, &stderr)
+
+	if code != 2 {
+		t.Fatalf("run returned %d, want 2", code)
+	}
+	if stdout.Len() != 0 {
+		t.Fatalf("unexpected update argument wrote stdout: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), `unexpected argument "now"`) {
+		t.Fatalf("unexpected update argument stderr missing error: %q", stderr.String())
 	}
 }
 

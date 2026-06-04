@@ -11,8 +11,8 @@ Builds from `main` are rolling prereleases and can change on every push.
 
 ## Run
 
-Run `llmgate` with one copy/paste command. Builds from `main` are rolling
-prereleases and can change on every push.
+Install or update `llmgate` with one copy/paste command and start it. Builds
+from `main` are rolling prereleases and can change on every push.
 
 MacOS/Linux:
 
@@ -26,18 +26,34 @@ Windows:
 iwr https://github.com/r13v/llmgate/releases/download/main/run.ps1 -UseB | iex
 ```
 
+After installation, update the installed command without starting the setup
+wizard:
+
+```sh
+llmgate update
+```
+
 ## Run Script Details
 
 The run scripts download the matching archive for your OS and CPU, verify its
-SHA-256 digest against `checksums.txt`, cache the verified binary, and start
-`llmgate`. On later runs, they check for updates and reuse the cache when the
-rolling `main` build has not changed. If the update check fails, a previously
-verified cached binary can still run.
+SHA-256 digest against `checksums.txt`, install or update the user-local
+`llmgate` command, write install metadata, and start `llmgate`. On later runs,
+they check for updates and reuse the installed command when the rolling `main`
+build has not changed. If the update check fails, a previously verified
+installed command can still run.
 
-Cache locations:
+Install locations:
 
-- Unix: `${XDG_CACHE_HOME:-$HOME/.cache}/llmgate/main/<os>-<arch>/`
-- Windows: `$env:LOCALAPPDATA\llmgate\cache\main\windows-<arch>\`
+- Unix: `$HOME/.local/bin/llmgate`
+- Windows: `$env:LOCALAPPDATA\Programs\llmgate\llmgate.exe`
+
+Install metadata locations:
+
+- Unix: `${XDG_STATE_HOME:-$HOME/.local/state}/llmgate/install.json`
+- Windows: `$env:LOCALAPPDATA\llmgate\install.json`
+
+The scripts do not edit shell profiles or User `PATH`. If the install directory
+is not already in `PATH`, they print a manual PATH setup hint.
 
 The scripts forward arguments to `llmgate`. For example:
 
